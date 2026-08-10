@@ -212,3 +212,6 @@ if __name__ == "__main__":
     except Exception as error:
         print("\nERROR:")
         print(error)
+
+
+# reader.py:329: UserWarning: Data Validation extension is not supported and will be removed warn(msg)
