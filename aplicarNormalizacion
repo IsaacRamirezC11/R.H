@@ -1,207 +1,200 @@
 import os
-import re
 from openpyxl import load_workbook
-
-# ==========================================================
-# APLICADOR - AHORRO SOLIDARIO
-#
-# Entrada:
-#   Ahorro Solidario Actual_1641_Correcto(36).xlsx
-#   normalizacion_rh_v3_3_FINAL.xlsx
-#
-# Salida:
-#   Ahorro Solidario Actual_1641_Correcto(36)_NORMALIZADO.xlsx
-#
-# SOLO modifica las columnas HOM, Nivel y UR.
-# Todas las demás columnas y su orden se conservan.
-# ==========================================================
 
 ARCHIVO_BASE = "Ahorro Solidario Actual_1641_Correcto(36).xlsx"
 ARCHIVO_NORMALIZACION = "normalizacion_rh_v3_3_FINAL.xlsx"
 ARCHIVO_SALIDA = "Ahorro Solidario Actual_1641_Correcto(36)_NORMALIZADO.xlsx"
 
-# None = primera hoja del libro. Si la base tiene una hoja específica,
-# puedes colocar su nombre aquí.
 HOJA_BASE = None
-HOJA_APLICAR = "APLICAR"
+HOJA_RESULTADOS = "RESULTADOS"
+ESPACIOS_NO_ENCONTRADO = "   "
 
 
 def buscar_columna(ws, nombre):
     for celda in ws[1]:
         if str(celda.value).strip().upper() == nombre.upper():
             return celda.column
-    raise ValueError(
-        f'No se encontró la columna "{nombre}" en "{ws.title}".'
-    )
+    raise ValueError(f'No se encontró "{nombre}" en "{ws.title}".')
+
+
+def limpiar(valor):
+    if valor is None:
+        return ""
+    return str(valor).strip().upper()
+
+
+def hom_valido(valor):
+    return limpiar(valor) not in {
+        "", "-", "--", "#N/D", "#N/A", "N/A", "NA",
+        "NAN", "NONE", "NULL", "0", "0.0"
+    }
 
 
 def nivel_valido(valor):
-    if valor is None:
-        return False
-    texto = str(valor).strip().upper().replace(" ", "")
-    if not re.fullmatch(r"[A-Z0-9]{3}", texto):
-        return False
+    texto = limpiar(valor).replace(" ", "")
     return (
-        sum(c.isalpha() for c in texto) == 2
+        len(texto) == 3
+        and sum(c.isalpha() for c in texto) == 2
         and sum(c.isdigit() for c in texto) == 1
     )
 
 
 def ur_valida(valor):
-    if valor is None:
-        return False
-    texto = str(valor).strip()
-    if re.fullmatch(r"\d+\.0", texto):
+    texto = limpiar(valor)
+    if texto.endswith(".0") and texto[:-2].isdigit():
         texto = texto[:-2]
-    return bool(re.fullmatch(r"\d{3}", texto))
+    return texto.isdigit() and len(texto) == 3
 
 
-def hom_vacio(valor):
-    if valor is None:
-        return True
-    texto = str(valor).strip().upper()
-    return texto in {
-        "", "-", "--", "#N/D", "#N/A",
-        "N/A", "NA", "NAN", "NONE", "NULL", "0", "0.0"
-    }
+def preparar_ur(valor):
+    texto = limpiar(valor)
+    if texto.endswith(".0") and texto[:-2].isdigit():
+        texto = texto[:-2]
+    if texto.isdigit() and len(texto) < 3:
+        texto = texto.zfill(3)
+    return texto
+
+
+def no_encontrado(valor):
+    return valor is None or str(valor) == ESPACIOS_NO_ENCONTRADO or limpiar(valor) == ""
 
 
 def main():
-    print("=" * 65)
-    print("     APLICADOR - AHORRO SOLIDARIO")
-    print("=" * 65)
+    print("=" * 70)
+    print("       APLICADOR DIRECTO - AHORRO SOLIDARIO V2")
+    print("=" * 70)
 
     if not os.path.exists(ARCHIVO_BASE):
-        raise FileNotFoundError(
-            f'No se encontró "{ARCHIVO_BASE}".'
-        )
-
+        raise FileNotFoundError(f"No se encontró: {ARCHIVO_BASE}")
     if not os.path.exists(ARCHIVO_NORMALIZACION):
-        raise FileNotFoundError(
-            f'No se encontró "{ARCHIVO_NORMALIZACION}". '
-            "Ejecuta primero el normalizador."
-        )
+        raise FileNotFoundError(f"No se encontró: {ARCHIVO_NORMALIZACION}")
 
-    wb_base = load_workbook(ARCHIVO_BASE)
+    print("\n[1/5] Abriendo base principal...")
+    wb_base = load_workbook(ARCHIVO_BASE, read_only=False, data_only=False)
+
+    print("[2/5] Abriendo resultados...")
     wb_norm = load_workbook(
         ARCHIVO_NORMALIZACION,
         read_only=True,
         data_only=True
     )
 
-    ws_base = (
-        wb_base[HOJA_BASE]
-        if HOJA_BASE is not None
-        else wb_base[wb_base.sheetnames[0]]
-    )
+    ws_base = wb_base[
+        wb_base.sheetnames[0] if HOJA_BASE is None else HOJA_BASE
+    ]
+    ws_resultados = wb_norm[HOJA_RESULTADOS]
 
-    if HOJA_APLICAR not in wb_norm.sheetnames:
-        raise ValueError(
-            f'No existe la hoja "{HOJA_APLICAR}".'
-        )
+    print(f"      Hoja principal: {ws_base.title}")
 
-    ws_aplicar = wb_norm[HOJA_APLICAR]
+    print("[3/5] Localizando columnas...")
 
-    columnas_base = {
+    base_cols = {
         "HOM": buscar_columna(ws_base, "HOM"),
         "Nivel": buscar_columna(ws_base, "Nivel"),
         "UR": buscar_columna(ws_base, "UR"),
     }
 
-    columnas_aplicar = {
-        nombre: buscar_columna(ws_aplicar, nombre)
-        for nombre in [
-            "FILA_EXCEL",
-            "HOM_NUEVA",
-            "NIVEL_NUEVO",
-            "UR_NUEVA"
-        ]
+    result_cols = {
+        "FILA_EXCEL": buscar_columna(ws_resultados, "FILA_EXCEL"),
+        "HOM_ENCONTRADA": buscar_columna(ws_resultados, "HOM_ENCONTRADA"),
+        "NIVEL_ENCONTRADO": buscar_columna(ws_resultados, "NIVEL_ENCONTRADO"),
+        "UR_ENCONTRADA": buscar_columna(ws_resultados, "UR_ENCONTRADA"),
     }
 
-    cambios = {"HOM": 0, "Nivel": 0, "UR": 0}
-    filas = 0
+    print("[4/5] Aplicando resultados...")
+    print("      No encontrado = exactamente 3 espacios.")
 
-    print(f"Hoja principal: {ws_base.title}")
-    print("Aplicando únicamente HOM, Nivel y UR...")
+    procesadas = 0
+    hom_ok = nivel_ok = ur_ok = 0
+    hom_nf = nivel_nf = ur_nf = 0
 
-    for fila in ws_aplicar.iter_rows(min_row=2, values_only=True):
-
-        fila_excel = fila[columnas_aplicar["FILA_EXCEL"] - 1]
+    for fila in ws_resultados.iter_rows(min_row=2, values_only=True):
+        fila_excel = fila[result_cols["FILA_EXCEL"] - 1]
         if fila_excel is None:
             continue
 
         fila_excel = int(fila_excel)
-        filas += 1
+        procesadas += 1
 
-        # HOM
-        nuevo = fila[columnas_aplicar["HOM_NUEVA"] - 1]
-        if (
-            nuevo is not None
-            and str(nuevo).strip() not in ("", "   ")
-            and hom_vacio(
-                ws_base.cell(
-                    fila_excel,
-                    columnas_base["HOM"]
-                ).value
-            )
-        ):
-            ws_base.cell(
-                fila_excel,
-                columnas_base["HOM"]
-            ).value = str(nuevo).strip().upper()
-            cambios["HOM"] += 1
+        if procesadas % 100 == 0:
+            print(f"      Procesadas: {procesadas:,}", flush=True)
 
-        # Nivel
-        nuevo = fila[columnas_aplicar["NIVEL_NUEVO"] - 1]
-        if (
-            nuevo is not None
-            and str(nuevo) != "   "
-            and nivel_valido(nuevo)
-        ):
-            celda = ws_base.cell(
-                fila_excel,
-                columnas_base["Nivel"]
-            )
-            if not nivel_valido(celda.value):
-                celda.value = str(nuevo).strip().upper()
-                cambios["Nivel"] += 1
+        # ---------- HOM ----------
+        celda = ws_base.cell(fila_excel, base_cols["HOM"])
+        if not hom_valido(celda.value):
+            encontrado = fila[result_cols["HOM_ENCONTRADA"] - 1]
 
-        # UR
-        nuevo = fila[columnas_aplicar["UR_NUEVA"] - 1]
-        if (
-            nuevo is not None
-            and str(nuevo) != "   "
-            and ur_valida(nuevo)
-        ):
-            celda = ws_base.cell(
-                fila_excel,
-                columnas_base["UR"]
-            )
-            if not ur_valida(celda.value):
-                texto = str(nuevo).strip()
-                if texto.isdigit() and len(texto) < 3:
-                    texto = texto.zfill(3)
-                celda.value = texto
-                cambios["UR"] += 1
+            if no_encontrado(encontrado):
+                celda.value = ESPACIOS_NO_ENCONTRADO
+                hom_nf += 1
+            else:
+                nuevo = str(encontrado).split(" / ")[0].strip()
+                if nuevo:
+                    celda.value = nuevo.upper()
+                    hom_ok += 1
+                else:
+                    celda.value = ESPACIOS_NO_ENCONTRADO
+                    hom_nf += 1
 
+        # ---------- NIVEL ----------
+        celda = ws_base.cell(fila_excel, base_cols["Nivel"])
+        if not nivel_valido(celda.value):
+            encontrado = fila[result_cols["NIVEL_ENCONTRADO"] - 1]
+
+            if no_encontrado(encontrado):
+                celda.value = ESPACIOS_NO_ENCONTRADO
+                nivel_nf += 1
+            else:
+                nuevo = str(encontrado).split(" / ")[0].strip()
+                if nivel_valido(nuevo):
+                    celda.value = nuevo.upper()
+                    nivel_ok += 1
+                else:
+                    celda.value = ESPACIOS_NO_ENCONTRADO
+                    nivel_nf += 1
+
+        # ---------- UR ----------
+        celda = ws_base.cell(fila_excel, base_cols["UR"])
+        if not ur_valida(celda.value):
+            encontrado = fila[result_cols["UR_ENCONTRADA"] - 1]
+
+            if no_encontrado(encontrado):
+                celda.value = ESPACIOS_NO_ENCONTRADO
+                ur_nf += 1
+            else:
+                nuevo = preparar_ur(
+                    str(encontrado).split(" / ")[0].strip()
+                )
+                if ur_valida(nuevo):
+                    celda.value = nuevo
+                    ur_ok += 1
+                else:
+                    celda.value = ESPACIOS_NO_ENCONTRADO
+                    ur_nf += 1
+
+    print("\n[5/5] Guardando copia final...")
     wb_base.save(ARCHIVO_SALIDA)
     wb_base.close()
     wb_norm.close()
 
-    print("=" * 65)
-    print("TERMINADO")
-    print(f"Filas procesadas: {filas:,}")
-    print(f"HOM actualizadas: {cambios['HOM']:,}")
-    print(f"Nivel actualizados: {cambios['Nivel']:,}")
-    print(f"UR actualizadas: {cambios['UR']:,}")
-    print(
-        f"Total cambios: "
-        f"{sum(cambios.values()):,}"
-    )
-    print(f"Archivo generado: {ARCHIVO_SALIDA}")
-    print("La base original NO fue sobrescrita.")
-    print("Las demás columnas NO fueron modificadas.")
-    print("=" * 65)
+    print("\n" + "=" * 70)
+    print("                 TERMINADO")
+    print("=" * 70)
+    print(f"Filas procesadas:       {procesadas:,}")
+    print(f"HOM actualizadas:       {hom_ok:,}")
+    print(f"HOM no encontradas:     {hom_nf:,}")
+    print(f"Nivel actualizados:     {nivel_ok:,}")
+    print(f"Nivel no encontrados:   {nivel_nf:,}")
+    print(f"UR actualizadas:        {ur_ok:,}")
+    print(f"UR no encontradas:      {ur_nf:,}")
+    print()
+    print(f"Archivo generado:")
+    print(ARCHIVO_SALIDA)
+    print()
+    print("SOLO se modificaron HOM, Nivel y UR.")
+    print("Los campos sin coincidencia contienen exactamente 3 espacios.")
+    print("La base original no fue sobrescrita.")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
@@ -212,6 +205,3 @@ if __name__ == "__main__":
     except Exception as error:
         print("\nERROR:")
         print(error)
-
-
-# reader.py:329: UserWarning: Data Validation extension is not supported and will be removed warn(msg)
