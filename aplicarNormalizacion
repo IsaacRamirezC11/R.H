@@ -1,0 +1,214 @@
+import os
+import re
+from openpyxl import load_workbook
+
+# ==========================================================
+# APLICADOR - AHORRO SOLIDARIO
+#
+# Entrada:
+#   Ahorro Solidario Actual_1641_Correcto(36).xlsx
+#   normalizacion_rh_v3_3_FINAL.xlsx
+#
+# Salida:
+#   Ahorro Solidario Actual_1641_Correcto(36)_NORMALIZADO.xlsx
+#
+# SOLO modifica las columnas HOM, Nivel y UR.
+# Todas las demás columnas y su orden se conservan.
+# ==========================================================
+
+ARCHIVO_BASE = "Ahorro Solidario Actual_1641_Correcto(36).xlsx"
+ARCHIVO_NORMALIZACION = "normalizacion_rh_v3_3_FINAL.xlsx"
+ARCHIVO_SALIDA = "Ahorro Solidario Actual_1641_Correcto(36)_NORMALIZADO.xlsx"
+
+# None = primera hoja del libro. Si la base tiene una hoja específica,
+# puedes colocar su nombre aquí.
+HOJA_BASE = None
+HOJA_APLICAR = "APLICAR"
+
+
+def buscar_columna(ws, nombre):
+    for celda in ws[1]:
+        if str(celda.value).strip().upper() == nombre.upper():
+            return celda.column
+    raise ValueError(
+        f'No se encontró la columna "{nombre}" en "{ws.title}".'
+    )
+
+
+def nivel_valido(valor):
+    if valor is None:
+        return False
+    texto = str(valor).strip().upper().replace(" ", "")
+    if not re.fullmatch(r"[A-Z0-9]{3}", texto):
+        return False
+    return (
+        sum(c.isalpha() for c in texto) == 2
+        and sum(c.isdigit() for c in texto) == 1
+    )
+
+
+def ur_valida(valor):
+    if valor is None:
+        return False
+    texto = str(valor).strip()
+    if re.fullmatch(r"\d+\.0", texto):
+        texto = texto[:-2]
+    return bool(re.fullmatch(r"\d{3}", texto))
+
+
+def hom_vacio(valor):
+    if valor is None:
+        return True
+    texto = str(valor).strip().upper()
+    return texto in {
+        "", "-", "--", "#N/D", "#N/A",
+        "N/A", "NA", "NAN", "NONE", "NULL", "0", "0.0"
+    }
+
+
+def main():
+    print("=" * 65)
+    print("     APLICADOR - AHORRO SOLIDARIO")
+    print("=" * 65)
+
+    if not os.path.exists(ARCHIVO_BASE):
+        raise FileNotFoundError(
+            f'No se encontró "{ARCHIVO_BASE}".'
+        )
+
+    if not os.path.exists(ARCHIVO_NORMALIZACION):
+        raise FileNotFoundError(
+            f'No se encontró "{ARCHIVO_NORMALIZACION}". '
+            "Ejecuta primero el normalizador."
+        )
+
+    wb_base = load_workbook(ARCHIVO_BASE)
+    wb_norm = load_workbook(
+        ARCHIVO_NORMALIZACION,
+        read_only=True,
+        data_only=True
+    )
+
+    ws_base = (
+        wb_base[HOJA_BASE]
+        if HOJA_BASE is not None
+        else wb_base[wb_base.sheetnames[0]]
+    )
+
+    if HOJA_APLICAR not in wb_norm.sheetnames:
+        raise ValueError(
+            f'No existe la hoja "{HOJA_APLICAR}".'
+        )
+
+    ws_aplicar = wb_norm[HOJA_APLICAR]
+
+    columnas_base = {
+        "HOM": buscar_columna(ws_base, "HOM"),
+        "Nivel": buscar_columna(ws_base, "Nivel"),
+        "UR": buscar_columna(ws_base, "UR"),
+    }
+
+    columnas_aplicar = {
+        nombre: buscar_columna(ws_aplicar, nombre)
+        for nombre in [
+            "FILA_EXCEL",
+            "HOM_NUEVA",
+            "NIVEL_NUEVO",
+            "UR_NUEVA"
+        ]
+    }
+
+    cambios = {"HOM": 0, "Nivel": 0, "UR": 0}
+    filas = 0
+
+    print(f"Hoja principal: {ws_base.title}")
+    print("Aplicando únicamente HOM, Nivel y UR...")
+
+    for fila in ws_aplicar.iter_rows(min_row=2, values_only=True):
+
+        fila_excel = fila[columnas_aplicar["FILA_EXCEL"] - 1]
+        if fila_excel is None:
+            continue
+
+        fila_excel = int(fila_excel)
+        filas += 1
+
+        # HOM
+        nuevo = fila[columnas_aplicar["HOM_NUEVA"] - 1]
+        if (
+            nuevo is not None
+            and str(nuevo).strip() not in ("", "   ")
+            and hom_vacio(
+                ws_base.cell(
+                    fila_excel,
+                    columnas_base["HOM"]
+                ).value
+            )
+        ):
+            ws_base.cell(
+                fila_excel,
+                columnas_base["HOM"]
+            ).value = str(nuevo).strip().upper()
+            cambios["HOM"] += 1
+
+        # Nivel
+        nuevo = fila[columnas_aplicar["NIVEL_NUEVO"] - 1]
+        if (
+            nuevo is not None
+            and str(nuevo) != "   "
+            and nivel_valido(nuevo)
+        ):
+            celda = ws_base.cell(
+                fila_excel,
+                columnas_base["Nivel"]
+            )
+            if not nivel_valido(celda.value):
+                celda.value = str(nuevo).strip().upper()
+                cambios["Nivel"] += 1
+
+        # UR
+        nuevo = fila[columnas_aplicar["UR_NUEVA"] - 1]
+        if (
+            nuevo is not None
+            and str(nuevo) != "   "
+            and ur_valida(nuevo)
+        ):
+            celda = ws_base.cell(
+                fila_excel,
+                columnas_base["UR"]
+            )
+            if not ur_valida(celda.value):
+                texto = str(nuevo).strip()
+                if texto.isdigit() and len(texto) < 3:
+                    texto = texto.zfill(3)
+                celda.value = texto
+                cambios["UR"] += 1
+
+    wb_base.save(ARCHIVO_SALIDA)
+    wb_base.close()
+    wb_norm.close()
+
+    print("=" * 65)
+    print("TERMINADO")
+    print(f"Filas procesadas: {filas:,}")
+    print(f"HOM actualizadas: {cambios['HOM']:,}")
+    print(f"Nivel actualizados: {cambios['Nivel']:,}")
+    print(f"UR actualizadas: {cambios['UR']:,}")
+    print(
+        f"Total cambios: "
+        f"{sum(cambios.values()):,}"
+    )
+    print(f"Archivo generado: {ARCHIVO_SALIDA}")
+    print("La base original NO fue sobrescrita.")
+    print("Las demás columnas NO fueron modificadas.")
+    print("=" * 65)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except PermissionError:
+        print("\nERROR: cierra los archivos de Excel antes de ejecutar.")
+    except Exception as error:
+        print("\nERROR:")
+        print(error)
