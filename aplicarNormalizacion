@@ -1,207 +1,892 @@
 import os
-from openpyxl import load_workbook
+import re
+import time
+import pandas as pd
 
-ARCHIVO_BASE = "Ahorro Solidario Actual_1641_Correcto(36).xlsx"
-ARCHIVO_NORMALIZACION = "normalizacion_rh_v3_3_FINAL.xlsx"
-ARCHIVO_SALIDA = "Ahorro Solidario Actual_1641_Correcto(36)_NORMALIZADO.xlsx"
+# ==========================================================
+# NORMALIZADOR RH - V3.3 FINAL
+# Corrige validación de HOM, Nivel y UR.
+#
+# Reglas:
+#   HOM   : se considera faltante si está vacío, 0, #N/D, etc.
+#   Nivel : exactamente 3 caracteres: 2 letras + 1 número
+#           (el número puede estar al inicio o al final).
+#   UR    : exactamente 3 dígitos.
+#           Si Excel convierte 007 en 7, se recupera como "007".
+#
+# IMPORTANTE:
+# - Usa RFC como llave principal.
+# - Refuerza identidad con CURP y nombres.
+# - NO descarta históricos con HOM/Nivel/UR diferentes.
+# - NO modifica el archivo original.
+# - En duplicados, después de validar identidad, el primero en el Excel tiene prioridad.
+# - Genera una hoja APLICAR con SOLO cambios automáticos seguros.
+# ==========================================================
 
-HOJA_BASE = None
-HOJA_RESULTADOS = "RESULTADOS"
-ESPACIOS_NO_ENCONTRADO = "   "
+ARCHIVO = "pruebapy2.xlsx"
+HOJA_BASE = "vacios"
+ARCHIVO_SALIDA = "normalizacion_rh_v3_3_FINAL.xlsx"
+
+HOJAS_BUSQUEDA = [
+    "Q1", "Q3", "Q4", "Q5", "Q6", "Q7",
+    "Q8", "Q9", "Q10", "Q11", "Q12", "Q13", "Q14"
+]
+
+COLUMNAS_IDENTIDAD = [
+    "RFC", "CURP", "PATERNO", "MATERNO", "NOMBRE"
+]
+
+COLUMNAS_DATOS = [
+    "HOM", "Nivel", "UR"
+]
+
+COLUMNAS_NECESARIAS = COLUMNAS_IDENTIDAD + COLUMNAS_DATOS
+
+INVALIDOS = {
+    "",
+    "-",
+    "--",
+    "#N/D",
+    "#N/A",
+    "N/A",
+    "NA",
+    "NAN",
+    "NONE",
+    "NULL",
+    "0",
+    "0.0",
+}
 
 
-def buscar_columna(ws, nombre):
-    for celda in ws[1]:
-        if str(celda.value).strip().upper() == nombre.upper():
-            return celda.column
-    raise ValueError(f'No se encontró "{nombre}" en "{ws.title}".')
-
+# ==========================================================
+# LIMPIEZA Y VALIDACIÓN
+# ==========================================================
 
 def limpiar(valor):
-    if valor is None:
+    if pd.isna(valor):
         return ""
     return str(valor).strip().upper()
 
 
-def hom_valido(valor):
-    return limpiar(valor) not in {
-        "", "-", "--", "#N/D", "#N/A", "N/A", "NA",
-        "NAN", "NONE", "NULL", "0", "0.0"
-    }
+def es_valido(valor):
+    return limpiar(valor) not in INVALIDOS
 
 
-def nivel_valido(valor):
-    texto = limpiar(valor).replace(" ", "")
-    return (
-        len(texto) == 3
-        and sum(c.isalpha() for c in texto) == 2
-        and sum(c.isdigit() for c in texto) == 1
-    )
-
-
-def ur_valida(valor):
+def normalizar_nivel(valor):
+    """
+    Nivel válido = exactamente 3 caracteres,
+    con 2 letras y 1 número, en cualquier orden.
+    Ejemplos válidos: AB1, A1B, 1AB.
+    """
     texto = limpiar(valor)
-    if texto.endswith(".0") and texto[:-2].isdigit():
-        texto = texto[:-2]
-    return texto.isdigit() and len(texto) == 3
+
+    if texto in INVALIDOS:
+        return ""
+
+    texto = texto.replace(" ", "")
+
+    if not re.fullmatch(r"[A-Z0-9]{3}", texto):
+        return ""
+
+    letras = sum(c.isalpha() for c in texto)
+    numeros = sum(c.isdigit() for c in texto)
+
+    if letras == 2 and numeros == 1:
+        return texto
+
+    return ""
 
 
-def preparar_ur(valor):
+def normalizar_ur(valor):
+    """
+    UR válido = exactamente 3 dígitos.
+    Si Excel quitó ceros a la izquierda:
+        7   -> 007
+        12  -> 012
+        123 -> 123
+    0 se considera dato faltante.
+    """
     texto = limpiar(valor)
-    if texto.endswith(".0") and texto[:-2].isdigit():
+
+    if texto in INVALIDOS:
+        return ""
+
+    texto = texto.replace(" ", "")
+
+    # Excel puede entregar un entero como 7.0
+    if re.fullmatch(r"\d+\.0", texto):
         texto = texto[:-2]
-    if texto.isdigit() and len(texto) < 3:
-        texto = texto.zfill(3)
-    return texto
+
+    if re.fullmatch(r"\d{3}", texto):
+        return texto
+
+    if texto.isdigit() and 1 <= len(texto) <= 2:
+        return texto.zfill(3)
+
+    return ""
 
 
-def no_encontrado(valor):
-    return valor is None or str(valor) == ESPACIOS_NO_ENCONTRADO or limpiar(valor) == ""
+def dato_valido(campo, valor):
+    if campo == "HOM":
+        return es_valido(valor)
 
+    if campo == "Nivel":
+        return normalizar_nivel(valor) != ""
+
+    if campo == "UR":
+        return normalizar_ur(valor) != ""
+
+    return es_valido(valor)
+
+
+def valor_normalizado(campo, valor):
+    if campo == "Nivel":
+        return normalizar_nivel(valor)
+
+    if campo == "UR":
+        return normalizar_ur(valor)
+
+    return limpiar(valor) if es_valido(valor) else ""
+
+
+# ==========================================================
+# VALIDACIÓN DEL ARCHIVO
+# ==========================================================
+
+def validar_archivo():
+    if not os.path.exists(ARCHIVO):
+        raise FileNotFoundError(f'No se encontró "{ARCHIVO}".')
+
+    excel = pd.ExcelFile(ARCHIVO)
+
+    hojas_requeridas = [HOJA_BASE] + HOJAS_BUSQUEDA
+
+    faltantes = [
+        hoja for hoja in hojas_requeridas
+        if hoja not in excel.sheet_names
+    ]
+
+    if faltantes:
+        raise ValueError(
+            "Faltan hojas: " + ", ".join(faltantes)
+        )
+
+    for hoja in hojas_requeridas:
+        columnas = pd.read_excel(
+            ARCHIVO,
+            sheet_name=hoja,
+            nrows=0
+        ).columns.tolist()
+
+        faltan_columnas = [
+            columna
+            for columna in COLUMNAS_NECESARIAS
+            if columna not in columnas
+        ]
+
+        if faltan_columnas:
+            raise ValueError(
+                f'En "{hoja}" faltan columnas: '
+                + ", ".join(faltan_columnas)
+            )
+
+
+# ==========================================================
+# IDENTIDAD
+# ==========================================================
+
+def puntaje_identidad(persona, candidato):
+    puntos = 0
+
+    curp_persona = limpiar(persona["CURP"])
+    curp_candidato = limpiar(candidato["CURP"])
+
+    if (
+        es_valido(curp_persona)
+        and es_valido(curp_candidato)
+        and curp_persona == curp_candidato
+    ):
+        puntos += 4
+
+    for columna in ["PATERNO", "MATERNO", "NOMBRE"]:
+        valor_persona = limpiar(persona[columna])
+        valor_candidato = limpiar(candidato[columna])
+
+        if (
+            es_valido(valor_persona)
+            and es_valido(valor_candidato)
+            and valor_persona == valor_candidato
+        ):
+            puntos += 1
+
+    return puntos
+
+
+# ==========================================================
+# OPCIONES VÁLIDAS DE UN CAMPO
+# ==========================================================
+
+def obtener_opciones(coincidencias, columna):
+    # Conserva el orden original del Excel.
+    # La primera opción válida es la más reciente.
+    valores = []
+
+    for valor in coincidencias[columna]:
+        valor_limpio = valor_normalizado(columna, valor)
+
+        if valor_limpio != "" and valor_limpio not in valores:
+            valores.append(valor_limpio)
+
+    return valores
+
+
+# ==========================================================
+# PROGRAMA PRINCIPAL
+# ==========================================================
 
 def main():
-    print("=" * 70)
-    print("       APLICADOR DIRECTO - AHORRO SOLIDARIO V2")
-    print("=" * 70)
+    inicio = time.perf_counter()
 
-    if not os.path.exists(ARCHIVO_BASE):
-        raise FileNotFoundError(f"No se encontró: {ARCHIVO_BASE}")
-    if not os.path.exists(ARCHIVO_NORMALIZACION):
-        raise FileNotFoundError(f"No se encontró: {ARCHIVO_NORMALIZACION}")
+    print("=" * 65)
+    print("       NORMALIZADOR DE BASE RH - V3.2")
+    print("=" * 65)
 
-    print("\n[1/5] Abriendo base principal...")
-    wb_base = load_workbook(ARCHIVO_BASE, read_only=False, data_only=False)
+    print("\nValidando archivo...")
+    validar_archivo()
+    print("[OK] Estructura correcta.")
 
-    print("[2/5] Abriendo resultados...")
-    wb_norm = load_workbook(
-        ARCHIVO_NORMALIZACION,
-        read_only=True,
-        data_only=True
+    # ------------------------------------------------------
+    # BASE PRINCIPAL
+    # ------------------------------------------------------
+    print("\nLeyendo base principal...")
+
+    base = pd.read_excel(
+        ARCHIVO,
+        sheet_name=HOJA_BASE,
+        dtype=object
     )
 
-    ws_base = wb_base[
-        wb_base.sheetnames[0] if HOJA_BASE is None else HOJA_BASE
-    ]
-    ws_resultados = wb_norm[HOJA_RESULTADOS]
+    base["_ID_FILA"] = range(len(base))
+    base["FILA_EXCEL"] = base["_ID_FILA"] + 2
+    base["RFC_KEY"] = base["RFC"].apply(limpiar)
 
-    print(f"      Hoja principal: {ws_base.title}")
+    print(f"[OK] {len(base):,} registros.")
 
-    print("[3/5] Localizando columnas...")
+    # ------------------------------------------------------
+    # DETECTAR CAMPOS FALTANTES O MAL FORMADOS
+    # ------------------------------------------------------
+    base["_FALTA_HOM"] = ~base["HOM"].apply(
+        lambda x: dato_valido("HOM", x)
+    )
 
-    base_cols = {
-        "HOM": buscar_columna(ws_base, "HOM"),
-        "Nivel": buscar_columna(ws_base, "Nivel"),
-        "UR": buscar_columna(ws_base, "UR"),
+    base["_FALTA_NIVEL"] = ~base["Nivel"].apply(
+        lambda x: dato_valido("Nivel", x)
+    )
+
+    base["_FALTA_UR"] = ~base["UR"].apply(
+        lambda x: dato_valido("UR", x)
+    )
+
+    base["_NECESITA_REVISION"] = (
+        base["_FALTA_HOM"]
+        | base["_FALTA_NIVEL"]
+        | base["_FALTA_UR"]
+    )
+
+    pendientes = base[
+        base["_NECESITA_REVISION"]
+    ].copy()
+
+    total_hom_pendiente = int(base["_FALTA_HOM"].sum())
+    total_nivel_pendiente = int(base["_FALTA_NIVEL"].sum())
+    total_ur_pendiente = int(base["_FALTA_UR"].sum())
+
+    print(
+        f"[OK] Registros que necesitan revisión: "
+        f"{len(pendientes):,}"
+    )
+    print(f"     HOM pendientes:   {total_hom_pendiente:,}")
+    print(f"     Nivel pendientes: {total_nivel_pendiente:,}")
+    print(f"     UR pendientes:    {total_ur_pendiente:,}")
+
+    # ------------------------------------------------------
+    # HISTÓRICOS
+    # ------------------------------------------------------
+    print("\nLeyendo Q1 - Q14...")
+
+    bases = []
+
+    for hoja in HOJAS_BUSQUEDA:
+        print(f" -> {hoja}")
+
+        datos = pd.read_excel(
+            ARCHIVO,
+            sheet_name=hoja,
+            usecols=COLUMNAS_NECESARIAS,
+            dtype=object
+        )
+
+        datos["RFC_KEY"] = datos["RFC"].apply(limpiar)
+        datos["_ORDEN_ORIGEN"] = range(len(datos))
+        datos["HOJA_ORIGEN"] = hoja
+
+        bases.append(datos)
+
+    historico = pd.concat(
+        bases,
+        ignore_index=True
+    )
+
+    # El orden original del Excel es la regla de actualidad:
+    # el registro que aparece primero tiene prioridad.
+    historico["_ORDEN_GLOBAL"] = range(len(historico))
+
+    historico = historico[
+        historico["RFC_KEY"] != ""
+    ].copy()
+
+    print(
+        f"[OK] {len(historico):,} registros "
+        "históricos cargados."
+    )
+
+    # ------------------------------------------------------
+    # ÍNDICE RFC
+    # ------------------------------------------------------
+    print("\nCreando índice...")
+
+    indice_rfc = {
+        rfc: grupo
+        for rfc, grupo in historico.groupby(
+            "RFC_KEY",
+            sort=False
+        )
     }
 
-    result_cols = {
-        "FILA_EXCEL": buscar_columna(ws_resultados, "FILA_EXCEL"),
-        "HOM_ENCONTRADA": buscar_columna(ws_resultados, "HOM_ENCONTRADA"),
-        "NIVEL_ENCONTRADO": buscar_columna(ws_resultados, "NIVEL_ENCONTRADO"),
-        "UR_ENCONTRADA": buscar_columna(ws_resultados, "UR_ENCONTRADA"),
-    }
+    print("[OK] Índice creado.")
 
-    print("[4/5] Aplicando resultados...")
-    print("      No encontrado = exactamente 3 espacios.")
+    # ------------------------------------------------------
+    # ANALIZAR PENDIENTES
+    # ------------------------------------------------------
+    print("\nBuscando información faltante...")
 
-    procesadas = 0
-    hom_ok = nivel_ok = ur_ok = 0
-    hom_nf = nivel_nf = ur_nf = 0
+    resultados = []
 
-    for fila in ws_resultados.iter_rows(min_row=2, values_only=True):
-        fila_excel = fila[result_cols["FILA_EXCEL"] - 1]
-        if fila_excel is None:
+    for _, persona in pendientes.iterrows():
+
+        rfc = persona["RFC_KEY"]
+        coincidencias = indice_rfc.get(rfc)
+
+        resultado = {
+            "_ID_FILA": persona["_ID_FILA"],
+            "FILA_EXCEL": persona["FILA_EXCEL"],
+            "HOM_ENCONTRADA": "",
+            "NIVEL_ENCONTRADO": "",
+            "UR_ENCONTRADA": "",
+            "HOJAS_ENCONTRADAS": "",
+            "NUM_COINCIDENCIAS": 0,
+            "COINCIDENCIAS_IDENTIDAD": 0,
+            "PUNTAJE_IDENTIDAD": 0,
+            "CRITERIO_IDENTIDAD": "",
+            "CAMPOS_PENDIENTES": "",
+            "CAMBIOS_PROPUESTOS": "",
+            "ESTADO": ""
+        }
+
+        campos_pendientes = []
+
+        if persona["_FALTA_HOM"]:
+            campos_pendientes.append("HOM")
+
+        if persona["_FALTA_NIVEL"]:
+            campos_pendientes.append("Nivel")
+
+        if persona["_FALTA_UR"]:
+            campos_pendientes.append("UR")
+
+        resultado["CAMPOS_PENDIENTES"] = ", ".join(
+            campos_pendientes
+        )
+
+        # --------------------------------------------------
+        # RFC NO ENCONTRADO
+        # --------------------------------------------------
+        if rfc == "" or coincidencias is None:
+            resultado["ESTADO"] = "NO_ENCONTRADO"
+            resultados.append(resultado)
             continue
 
-        fila_excel = int(fila_excel)
-        procesadas += 1
+        resultado["NUM_COINCIDENCIAS"] = len(coincidencias)
 
-        if procesadas % 100 == 0:
-            print(f"      Procesadas: {procesadas:,}", flush=True)
+        resultado["HOJAS_ENCONTRADAS"] = ", ".join(
+            sorted(
+                coincidencias["HOJA_ORIGEN"]
+                .dropna()
+                .unique()
+            )
+        )
 
-        # ---------- HOM ----------
-        celda = ws_base.cell(fila_excel, base_cols["HOM"])
-        if not hom_valido(celda.value):
-            encontrado = fila[result_cols["HOM_ENCONTRADA"] - 1]
+        # --------------------------------------------------
+        # IDENTIDAD
+        # --------------------------------------------------
+        coincidencias = coincidencias.copy()
 
-            if no_encontrado(encontrado):
-                celda.value = ESPACIOS_NO_ENCONTRADO
-                hom_nf += 1
-            else:
-                nuevo = str(encontrado).split(" / ")[0].strip()
-                if nuevo:
-                    celda.value = nuevo.upper()
-                    hom_ok += 1
-                else:
-                    celda.value = ESPACIOS_NO_ENCONTRADO
-                    hom_nf += 1
+        coincidencias["_PUNTAJE"] = coincidencias.apply(
+            lambda candidato:
+                puntaje_identidad(persona, candidato),
+            axis=1
+        )
 
-        # ---------- NIVEL ----------
-        celda = ws_base.cell(fila_excel, base_cols["Nivel"])
-        if not nivel_valido(celda.value):
-            encontrado = fila[result_cols["NIVEL_ENCONTRADO"] - 1]
+        mejor_puntaje = int(
+            coincidencias["_PUNTAJE"].max()
+        )
 
-            if no_encontrado(encontrado):
-                celda.value = ESPACIOS_NO_ENCONTRADO
-                nivel_nf += 1
-            else:
-                nuevo = str(encontrado).split(" / ")[0].strip()
-                if nivel_valido(nuevo):
-                    celda.value = nuevo.upper()
-                    nivel_ok += 1
-                else:
-                    celda.value = ESPACIOS_NO_ENCONTRADO
-                    nivel_nf += 1
+        if mejor_puntaje > 0:
+            candidatos = coincidencias[
+                coincidencias["_PUNTAJE"] == mejor_puntaje
+            ].copy()
+        else:
+            candidatos = coincidencias.copy()
 
-        # ---------- UR ----------
-        celda = ws_base.cell(fila_excel, base_cols["UR"])
-        if not ur_valida(celda.value):
-            encontrado = fila[result_cols["UR_ENCONTRADA"] - 1]
+        # Regla solicitada por RH:
+        # si hay duplicados, el primero que aparece en el Excel
+        # se considera el registro más reciente.
+        candidatos = candidatos.sort_values(
+            "_ORDEN_GLOBAL",
+            kind="stable"
+        )
 
-            if no_encontrado(encontrado):
-                celda.value = ESPACIOS_NO_ENCONTRADO
-                ur_nf += 1
-            else:
-                nuevo = preparar_ur(
-                    str(encontrado).split(" / ")[0].strip()
+        resultado["COINCIDENCIAS_IDENTIDAD"] = len(candidatos)
+        resultado["PUNTAJE_IDENTIDAD"] = mejor_puntaje
+
+        curp_persona = limpiar(persona["CURP"])
+
+        curp_coincidente = False
+
+        if es_valido(curp_persona):
+            curp_coincidente = candidatos["CURP"].apply(
+                lambda valor:
+                    es_valido(valor)
+                    and limpiar(valor) == curp_persona
+            ).any()
+
+        if curp_coincidente:
+            resultado["CRITERIO_IDENTIDAD"] = (
+                "RFC + CURP + DATOS PERSONALES"
+            )
+        elif mejor_puntaje > 0:
+            resultado["CRITERIO_IDENTIDAD"] = (
+                "RFC + DATOS PERSONALES"
+            )
+        else:
+            resultado["CRITERIO_IDENTIDAD"] = (
+                "SOLO RFC - REVISAR"
+            )
+
+        # --------------------------------------------------
+        # CAMPOS
+        # --------------------------------------------------
+        opciones_hom = []
+        opciones_nivel = []
+        opciones_ur = []
+
+        if persona["_FALTA_HOM"]:
+            opciones_hom = obtener_opciones(
+                candidatos,
+                "HOM"
+            )
+
+        if persona["_FALTA_NIVEL"]:
+            opciones_nivel = obtener_opciones(
+                candidatos,
+                "Nivel"
+            )
+
+        if persona["_FALTA_UR"]:
+            opciones_ur = obtener_opciones(
+                candidatos,
+                "UR"
+            )
+
+        resultado["HOM_ENCONTRADA"] = " / ".join(opciones_hom)
+        resultado["NIVEL_ENCONTRADO"] = " / ".join(opciones_nivel)
+        resultado["UR_ENCONTRADA"] = " / ".join(opciones_ur)
+
+        # --------------------------------------------------
+        # PROPUESTAS
+        # --------------------------------------------------
+        cambios = []
+        multiples = False
+        datos_encontrados = False
+
+        if persona["_FALTA_HOM"]:
+            if len(opciones_hom) >= 1:
+                cambios.append(
+                    f"HOM: {limpiar(persona['HOM'])} "
+                    f"-> {opciones_hom[0]}"
                 )
-                if ur_valida(nuevo):
-                    celda.value = nuevo
-                    ur_ok += 1
-                else:
-                    celda.value = ESPACIOS_NO_ENCONTRADO
-                    ur_nf += 1
+                datos_encontrados = True
 
-    print("\n[5/5] Guardando copia final...")
-    wb_base.save(ARCHIVO_SALIDA)
-    wb_base.close()
-    wb_norm.close()
+        if persona["_FALTA_NIVEL"]:
+            if len(opciones_nivel) >= 1:
+                cambios.append(
+                    f"Nivel: {limpiar(persona['Nivel'])} "
+                    f"-> {opciones_nivel[0]}"
+                )
+                datos_encontrados = True
 
-    print("\n" + "=" * 70)
-    print("                 TERMINADO")
-    print("=" * 70)
-    print(f"Filas procesadas:       {procesadas:,}")
-    print(f"HOM actualizadas:       {hom_ok:,}")
-    print(f"HOM no encontradas:     {hom_nf:,}")
-    print(f"Nivel actualizados:     {nivel_ok:,}")
-    print(f"Nivel no encontrados:   {nivel_nf:,}")
-    print(f"UR actualizadas:        {ur_ok:,}")
-    print(f"UR no encontradas:      {ur_nf:,}")
+        if persona["_FALTA_UR"]:
+            if len(opciones_ur) >= 1:
+                cambios.append(
+                    f"UR: {limpiar(persona['UR'])} "
+                    f"-> {opciones_ur[0]}"
+                )
+                datos_encontrados = True
+
+        resultado["CAMBIOS_PROPUESTOS"] = " | ".join(cambios)
+
+        # --------------------------------------------------
+        # ESTADO
+        # --------------------------------------------------
+        if multiples:
+            resultado["ESTADO"] = "MULTIPLES_COINCIDENCIAS"
+        elif datos_encontrados:
+            resultado["ESTADO"] = "COMPLETADO_AUTOMATICAMENTE"
+        else:
+            if mejor_puntaje == 0:
+                resultado["ESTADO"] = "REVISAR_IDENTIDAD"
+            else:
+                resultado["ESTADO"] = "SIN_DATO_DISPONIBLE"
+
+        resultados.append(resultado)
+
+    # ------------------------------------------------------
+    # RESULTADOS COMPLETOS
+    # ------------------------------------------------------
+    resultados_df = pd.DataFrame(resultados)
+
+    resultado_completo = base.merge(
+        resultados_df,
+        on=["_ID_FILA", "FILA_EXCEL"],
+        how="left",
+        validate="one_to_one"
+    )
+
+    resultado_completo["ESTADO"] = (
+        resultado_completo["ESTADO"]
+        .fillna("SIN_CAMBIOS")
+    )
+
+    resultado_completo["HOM_FINAL_PROPUESTA"] = (
+        resultado_completo["HOM"]
+    )
+
+    resultado_completo["NIVEL_FINAL_PROPUESTO"] = (
+        resultado_completo["Nivel"]
+        .apply(lambda x: limpiar(x))
+    )
+
+    resultado_completo["UR_FINAL_PROPUESTA"] = (
+        resultado_completo["UR"]
+    )
+
+    # ------------------------------------------------------
+    # APLICAR PROPUESTA SOLO SI HAY UNA OPCIÓN ÚNICA
+    # ------------------------------------------------------
+    mascara = (
+        resultado_completo["_FALTA_HOM"]
+        & resultado_completo["HOM_ENCONTRADA"]
+        .fillna("")
+        .apply(lambda x: x != "")
+    )
+
+    resultado_completo.loc[
+        mascara,
+        "HOM_FINAL_PROPUESTA"
+    ] = resultado_completo.loc[
+        mascara,
+        "HOM_ENCONTRADA"
+    ]
+
+    mascara = (
+        resultado_completo["_FALTA_NIVEL"]
+        & resultado_completo["NIVEL_ENCONTRADO"]
+        .fillna("")
+        .apply(lambda x: x != "")
+    )
+
+    resultado_completo.loc[
+        mascara,
+        "NIVEL_FINAL_PROPUESTO"
+    ] = resultado_completo.loc[
+        mascara,
+        "NIVEL_ENCONTRADO"
+    ]
+
+    mascara = (
+        resultado_completo["_FALTA_UR"]
+        & resultado_completo["UR_ENCONTRADA"]
+        .fillna("")
+        .apply(lambda x: x != "")
+    )
+
+    resultado_completo.loc[
+        mascara,
+        "UR_FINAL_PROPUESTA"
+    ] = resultado_completo.loc[
+        mascara,
+        "UR_ENCONTRADA"
+    ]
+
+    # ------------------------------------------------------
+    # CONTADORES
+    # ------------------------------------------------------
+    completados = resultado_completo[
+        resultado_completo["ESTADO"]
+        == "COMPLETADO_AUTOMATICAMENTE"
+    ].copy()
+
+    multiples = resultado_completo[
+        resultado_completo["ESTADO"]
+        == "MULTIPLES_COINCIDENCIAS"
+    ].copy()
+
+    revisar = resultado_completo[
+        resultado_completo["ESTADO"]
+        == "REVISAR_IDENTIDAD"
+    ].copy()
+
+    no_encontrados = resultado_completo[
+        resultado_completo["ESTADO"]
+        == "NO_ENCONTRADO"
+    ].copy()
+
+    sin_dato = resultado_completo[
+        resultado_completo["ESTADO"]
+        == "SIN_DATO_DISPONIBLE"
+    ].copy()
+
+    sin_cambios = resultado_completo[
+        resultado_completo["ESTADO"]
+        == "SIN_CAMBIOS"
+    ].copy()
+
+    def unica(columna, faltante):
+        return int(
+            (
+                resultado_completo[faltante]
+                & resultado_completo[columna]
+                .fillna("")
+                .apply(
+                    lambda x:
+                        x != "" and " / " not in x
+                )
+            ).sum()
+        )
+
+    hom_recuperadas = unica(
+        "HOM_ENCONTRADA",
+        "_FALTA_HOM"
+    )
+
+    nivel_recuperados = unica(
+        "NIVEL_ENCONTRADO",
+        "_FALTA_NIVEL"
+    )
+
+    ur_recuperadas = unica(
+        "UR_ENCONTRADA",
+        "_FALTA_UR"
+    )
+
+    # ------------------------------------------------------
+    # HOJA APLICAR
+    # Solo cambios automáticos y únicos.
+    # ------------------------------------------------------
+    aplicar = resultado_completo[
+        resultado_completo["ESTADO"]
+        == "COMPLETADO_AUTOMATICAMENTE"
+    ][[
+        "FILA_EXCEL",
+        "RFC",
+        "CURP",
+        "PATERNO",
+        "MATERNO",
+        "NOMBRE",
+        "HOM_FINAL_PROPUESTA",
+        "NIVEL_FINAL_PROPUESTO",
+        "UR_FINAL_PROPUESTA"
+    ]].copy()
+
+    aplicar = aplicar.rename(columns={
+        "HOM_FINAL_PROPUESTA": "HOM_NUEVA",
+        "NIVEL_FINAL_PROPUESTO": "NIVEL_NUEVO",
+        "UR_FINAL_PROPUESTA": "UR_NUEVA"
+    })
+
+    # ------------------------------------------------------
+    # LIMPIAR INTERNOS
+    # ------------------------------------------------------
+    columnas_internas = [
+        "_ID_FILA",
+        "RFC_KEY",
+        "_FALTA_HOM",
+        "_FALTA_NIVEL",
+        "_FALTA_UR",
+        "_NECESITA_REVISION"
+    ]
+
+    resultado_exportar = resultado_completo.drop(
+        columns=columnas_internas
+    )
+
+    # ------------------------------------------------------
+    # RESUMEN
+    # ------------------------------------------------------
+    resumen = pd.DataFrame({
+        "CONCEPTO": [
+            "Registros totales",
+            "Registros que necesitaban revisión",
+            "Registros sin cambios",
+            "HOM pendientes inicialmente",
+            "HOM recuperadas con opción única",
+            "HOM pendientes después",
+            "Nivel pendientes inicialmente",
+            "Nivel recuperados con opción única",
+            "Nivel pendientes después",
+            "UR pendientes inicialmente",
+            "UR recuperadas con opción única",
+            "UR pendientes después",
+            "Completados automáticamente",
+            "Múltiples coincidencias",
+            "Revisar identidad",
+            "No encontrados",
+            "Sin dato disponible"
+        ],
+        "TOTAL": [
+            len(base),
+            len(pendientes),
+            len(sin_cambios),
+            total_hom_pendiente,
+            hom_recuperadas,
+            total_hom_pendiente - hom_recuperadas,
+            total_nivel_pendiente,
+            nivel_recuperados,
+            total_nivel_pendiente - nivel_recuperados,
+            total_ur_pendiente,
+            ur_recuperadas,
+            total_ur_pendiente - ur_recuperadas,
+            len(completados),
+            len(multiples),
+            len(revisar),
+            len(no_encontrados),
+            len(sin_dato)
+        ]
+    })
+
+    # ------------------------------------------------------
+    # EXPORTAR
+    # ------------------------------------------------------
+    print("\nGenerando reporte...")
+
+    with pd.ExcelWriter(
+        ARCHIVO_SALIDA,
+        engine="openpyxl"
+    ) as writer:
+
+        resumen.to_excel(
+            writer,
+            sheet_name="RESUMEN",
+            index=False
+        )
+
+        resultado_exportar.to_excel(
+            writer,
+            sheet_name="RESULTADOS",
+            index=False
+        )
+
+        completados.to_excel(
+            writer,
+            sheet_name="COMPLETADOS",
+            index=False
+        )
+
+        aplicar.to_excel(
+            writer,
+            sheet_name="APLICAR",
+            index=False
+        )
+
+        multiples.to_excel(
+            writer,
+            sheet_name="MULTIPLES",
+            index=False
+        )
+
+        revisar.to_excel(
+            writer,
+            sheet_name="REVISAR",
+            index=False
+        )
+
+        no_encontrados.to_excel(
+            writer,
+            sheet_name="NO_ENCONTRADOS",
+            index=False
+        )
+
+        sin_dato.to_excel(
+            writer,
+            sheet_name="SIN_DATO",
+            index=False
+        )
+
+    tiempo = time.perf_counter() - inicio
+
+    print("\n" + "=" * 65)
+    print("             NORMALIZACIÓN TERMINADA")
+    print("=" * 65)
+    print(f"Registros totales:          {len(base):,}")
+    print(f"Necesitaban revisión:       {len(pendientes):,}")
+    print(f"Completados automáticamente:{len(completados):,}")
+    print(f"Múltiples coincidencias:    {len(multiples):,}")
+    print(f"Revisar identidad:          {len(revisar):,}")
+    print(f"No encontrados:             {len(no_encontrados):,}")
+    print(f"Sin dato disponible:        {len(sin_dato):,}")
     print()
-    print(f"Archivo generado:")
-    print(ARCHIVO_SALIDA)
+    print(
+        f"HOM recuperadas:            "
+        f"{hom_recuperadas:,} / {total_hom_pendiente:,}"
+    )
+    print(
+        f"Nivel recuperados:          "
+        f"{nivel_recuperados:,} / {total_nivel_pendiente:,}"
+    )
+    print(
+        f"UR recuperadas:             "
+        f"{ur_recuperadas:,} / {total_ur_pendiente:,}"
+    )
     print()
-    print("SOLO se modificaron HOM, Nivel y UR.")
-    print("Los campos sin coincidencia contienen exactamente 3 espacios.")
-    print("La base original no fue sobrescrita.")
-    print("=" * 70)
+    print(f"Tiempo: {tiempo:.2f} segundos")
+    print(f"Archivo: {ARCHIVO_SALIDA}")
+    print("=" * 65)
 
 
 if __name__ == "__main__":
     try:
         main()
+
     except PermissionError:
-        print("\nERROR: cierra los archivos de Excel antes de ejecutar.")
+        print(
+            "\nERROR: Cierra los archivos de Excel "
+            "antes de ejecutar el programa."
+        )
+
+    except (FileNotFoundError, ValueError, KeyError) as error:
+        print("\nERROR DE VALIDACIÓN:")
+        print(error)
+
     except Exception as error:
-        print("\nERROR:")
+        print("\nERROR INESPERADO:")
         print(error)
