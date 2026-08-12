@@ -1,100 +1,339 @@
 Option Compare Database
 Option Explicit
 
-Private Const FORMULARIO As String = "frmAhorroSolidario"
+Private Const TABLA As String = "AHORRO_SOLIDARIO"
+Private Const NOMBRE_FORMULARIO As String = "frmNuevoAhorro"
+
 
 '==========================================================
-' AL ABRIR EL FORMULARIO
+' CREAR EL FORMULARIO
 '==========================================================
-
-Public Sub PrepararFormulario()
+Public Sub CrearFormularioNuevoAhorro()
 
     On Error GoTo ErrorHandler
 
-    Dim frm As Form
+    Dim db As DAO.Database
+    Dim td As DAO.TableDef
+    Dim fld As DAO.Field
 
-    Set frm = Forms(FORMULARIO)
+    Dim frm As Access.Form
+    Dim ctl As Access.Control
+    Dim lbl As Access.Control
 
-    ' No mostrar ningún registro inicialmente
-    frm.Filter = "1=0"
-    frm.FilterOn = True
+    Dim nombreTemporal As String
+    Dim nombreControl As String
+
+    Dim x As Long
+    Dim y As Long
+    Dim i As Long
+
+    Set db = CurrentDb
+
+    '------------------------------------------------------
+    ' Comprobar tabla
+    '------------------------------------------------------
+
+    Set td = db.TableDefs(TABLA)
+
+    '------------------------------------------------------
+    ' Eliminar formulario anterior
+    '------------------------------------------------------
+
+    On Error Resume Next
+
+    DoCmd.Close acForm, NOMBRE_FORMULARIO, acSaveNo
+    DoCmd.DeleteObject acForm, NOMBRE_FORMULARIO
+
+    On Error GoTo ErrorHandler
+
+    '------------------------------------------------------
+    ' Crear formulario temporal
+    '------------------------------------------------------
+
+    Set frm = CreateForm
+
+    nombreTemporal = frm.Name
+
+    '------------------------------------------------------
+    ' Propiedades
+    '------------------------------------------------------
+
+    frm.Caption = "AHORRO SOLIDARIO - Nuevo registro"
+
+    frm.RecordSource = TABLA
+
+    frm.DefaultView = 0
+    frm.NavigationButtons = False
+    frm.RecordSelectors = False
+    frm.DividingLines = False
+    frm.AutoCenter = True
+    frm.AutoResize = False
+
+    frm.Width = 12500
+    frm.ScrollBars = 2
+
+    ' SOLO REGISTRO NUEVO
+    frm.DataEntry = True
+
+    '------------------------------------------------------
+    ' TÍTULO
+    '------------------------------------------------------
+
+    Set lbl = CreateControl( _
+        nombreTemporal, acLabel, acDetail, _
+        , , 500, 300, 11000, 500)
+
+    lbl.Caption = "NUEVO REGISTRO - AHORRO SOLIDARIO"
+    lbl.FontSize = 18
+    lbl.FontWeight = 700
+
+    '------------------------------------------------------
+    ' SUBTÍTULO
+    '------------------------------------------------------
+
+    Set lbl = CreateControl( _
+        nombreTemporal, acLabel, acDetail, _
+        , , 500, 850, 11000, 350)
+
+    lbl.Caption = "Capture los datos del nuevo registro."
+    lbl.FontSize = 10
+
+    '------------------------------------------------------
+    ' BOTÓN GUARDAR
+    '------------------------------------------------------
+
+    Set ctl = CreateControl( _
+        nombreTemporal, acCommandButton, acDetail, _
+        , , 8500, 1200, 1500, 500)
+
+    ctl.Name = "cmdGuardar"
+    ctl.Caption = "GUARDAR"
+    ctl.OnClick = "=GuardarNuevoAhorro()"
+
+    '------------------------------------------------------
+    ' BOTÓN LIMPIAR
+    '------------------------------------------------------
+
+    Set ctl = CreateControl( _
+        nombreTemporal, acCommandButton, acDetail, _
+        , , 10100, 1200, 1500, 500)
+
+    ctl.Name = "cmdLimpiar"
+    ctl.Caption = "LIMPIAR"
+    ctl.OnClick = "=LimpiarNuevoAhorro()"
+
+    '------------------------------------------------------
+    ' ESTADO
+    '------------------------------------------------------
+
+    Set lbl = CreateControl( _
+        nombreTemporal, acLabel, acDetail, _
+        , , 500, 1300, 7000, 350)
+
+    lbl.Name = "lblEstado"
+    lbl.Caption = "Listo para capturar un nuevo registro."
+
+    '------------------------------------------------------
+    ' CAMPOS
+    '------------------------------------------------------
+
+    x = 500
+    y = 1900
+    i = 0
+
+    For Each fld In td.Fields
+
+        If i Mod 2 = 0 Then
+            x = 500
+        Else
+            x = 6100
+        End If
+
+        If i > 0 And i Mod 2 = 0 Then
+            y = y + 700
+        End If
+
+        '----------------------------------------------
+        ' ETIQUETA
+        '----------------------------------------------
+
+        Set lbl = CreateControl( _
+            nombreTemporal, acLabel, acDetail, _
+            , , x, y, 2200, 350)
+
+        lbl.Caption = fld.Name
+        lbl.FontSize = 8
+        lbl.FontWeight = 700
+
+        '----------------------------------------------
+        ' CAMPO
+        '----------------------------------------------
+
+        nombreControl = "txtCampo" & CStr(i)
+
+        Set ctl = CreateControl( _
+            nombreTemporal, acTextBox, acDetail, _
+            , , x + 2300, y - 40, 3000, 420)
+
+        ctl.Name = nombreControl
+
+        ctl.ControlSource = "[" & fld.Name & "]"
+
+        ctl.Tag = fld.Name
+
+        ctl.FontSize = 9
+
+        '----------------------------------------------
+        ' AUTONUMÉRICO
+        '----------------------------------------------
+
+        If (fld.Attributes And dbAutoIncrField) <> 0 Then
+            ctl.Locked = True
+            ctl.Enabled = False
+        End If
+
+        i = i + 1
+
+    Next fld
+
+    frm.Section(acDetail).Height = y + 1000
+
+    '------------------------------------------------------
+    ' GUARDAR
+    '------------------------------------------------------
+
+    DoCmd.Save acForm, nombreTemporal
+
+    DoCmd.Close acForm, nombreTemporal, acSaveYes
+
+    '------------------------------------------------------
+    ' RENOMBRAR
+    '------------------------------------------------------
+
+    DoCmd.Rename NOMBRE_FORMULARIO, acForm, nombreTemporal
+
+    '------------------------------------------------------
+    ' ABRIR EL FORMULARIO
+    '------------------------------------------------------
+
+    DoCmd.OpenForm NOMBRE_FORMULARIO, acNormal
 
     Exit Sub
 
 ErrorHandler:
 
-    MsgBox "Error al preparar el formulario." & vbCrLf & _
-           Err.Number & ": " & Err.Description, _
-           vbCritical, "Ahorro Solidario"
+    MsgBox _
+        "No se pudo crear el formulario." & vbCrLf & vbCrLf & _
+        "Error: " & Err.Number & vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "AHORRO SOLIDARIO"
 
 End Sub
 
 
 '==========================================================
-' BUSCAR POR RFC_COMPLETO O CURP
+' GUARDAR NUEVO REGISTRO
 '==========================================================
-
-Public Function BuscarAhorroSolidario() As Boolean
+Public Function GuardarNuevoAhorro() As Boolean
 
     On Error GoTo ErrorHandler
 
-    Dim frm As Form
-    Dim valor As String
-    Dim filtro As String
+    Dim frm As Access.Form
+    Dim ctl As Access.Control
 
-    Set frm = Forms(FORMULARIO)
+    Dim rfc As String
+    Dim curp As String
+    Dim existe As Long
 
-    valor = Trim(Nz(frm!txtBusqueda.Value, ""))
+    Set frm = Screen.ActiveForm
 
-    If valor = "" Then
+    '------------------------------------------------------
+    ' Obtener RFC_COMPLETO
+    '------------------------------------------------------
 
-        MsgBox "Escribe un RFC_COMPLETO o CURP.", _
-               vbExclamation, "Ahorro Solidario"
+    rfc = ValorCampo(frm, "RFC_COMPLETO")
+
+    If Trim(rfc) = "" Then
+
+        MsgBox _
+            "RFC_COMPLETO es obligatorio.", _
+            vbExclamation, _
+            "AHORRO SOLIDARIO"
+
+        EnfocarCampo frm, "RFC_COMPLETO"
 
         Exit Function
 
     End If
 
-    ' Evitar problemas con comillas
-    valor = Replace(valor, "'", "''")
+    '------------------------------------------------------
+    ' Obtener CURP
+    '------------------------------------------------------
 
-    ' Buscar en RFC_COMPLETO o CURP
-    filtro = "[RFC_COMPLETO] = '" & valor & "'" & _
-             " OR [CURP] = '" & valor & "'"
+    curp = ValorCampo(frm, "CURP")
 
-    ' Aplicar búsqueda
-    frm.Filter = filtro
-    frm.FilterOn = True
+    If Trim(curp) = "" Then
 
-    ' Comprobar si encontró algo
-    If frm.RecordsetClone.EOF Then
+        MsgBox _
+            "CURP es obligatorio.", _
+            vbExclamation, _
+            "AHORRO SOLIDARIO"
 
-        frm.Filter = "1=0"
-        frm.FilterOn = True
+        EnfocarCampo frm, "CURP"
 
-        MsgBox "No se encontró ningún registro.", _
-               vbInformation, "Ahorro Solidario"
-
-        BuscarAhorroSolidario = False
-
-    Else
-
-        frm.RecordsetClone.MoveFirst
-
-        MsgBox "Registro encontrado.", _
-               vbInformation, "Ahorro Solidario"
-
-        BuscarAhorroSolidario = True
+        Exit Function
 
     End If
+
+    '------------------------------------------------------
+    ' Comprobar RFC duplicado
+    '------------------------------------------------------
+
+    existe = DCount( _
+        "*", _
+        TABLA, _
+        "[RFC_COMPLETO]='" & Replace(rfc, "'", "''") & "'")
+
+    If existe > 0 Then
+
+        MsgBox _
+            "Ya existe un registro con ese RFC_COMPLETO.", _
+            vbExclamation, _
+            "AHORRO SOLIDARIO"
+
+        Exit Function
+
+    End If
+
+    '------------------------------------------------------
+    ' Guardar
+    '------------------------------------------------------
+
+    If frm.Dirty Then
+        DoCmd.RunCommand acCmdSaveRecord
+    End If
+
+    frm.Controls("lblEstado").Caption = _
+        "Registro guardado correctamente."
+
+    MsgBox _
+        "REGISTRO GUARDADO CORRECTAMENTE.", _
+        vbInformation, _
+        "AHORRO SOLIDARIO"
+
+    GuardarNuevoAhorro = True
 
     Exit Function
 
 ErrorHandler:
 
-    MsgBox "Error al realizar la búsqueda." & vbCrLf & _
-           Err.Number & ": " & Err.Description, _
-           vbCritical, "Ahorro Solidario"
+    MsgBox _
+        "No se pudo guardar el registro." & vbCrLf & vbCrLf & _
+        "Error: " & Err.Number & vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "AHORRO SOLIDARIO"
 
 End Function
 
@@ -102,32 +341,84 @@ End Function
 '==========================================================
 ' LIMPIAR
 '==========================================================
-
-Public Function LimpiarAhorroSolidario() As Boolean
+Public Function LimpiarNuevoAhorro() As Boolean
 
     On Error GoTo ErrorHandler
 
-    Dim frm As Form
+    Dim frm As Access.Form
 
-    Set frm = Forms(FORMULARIO)
+    Set frm = Screen.ActiveForm
 
-    ' Borrar búsqueda
-    frm!txtBusqueda = Null
+    If frm.Dirty Then
+        frm.Undo
+    End If
 
-    ' Ocultar nuevamente todos los registros
-    frm.Filter = "1=0"
-    frm.FilterOn = True
+    DoCmd.GoToRecord , , acNewRec
 
-    frm!txtBusqueda.SetFocus
+    frm.Controls("lblEstado").Caption = _
+        "Listo para capturar un nuevo registro."
 
-    LimpiarAhorroSolidario = True
+    LimpiarNuevoAhorro = True
 
     Exit Function
 
 ErrorHandler:
 
-    MsgBox "Error al limpiar." & vbCrLf & _
-           Err.Number & ": " & Err.Description, _
-           vbCritical, "Ahorro Solidario"
+    MsgBox _
+        "No se pudo limpiar el formulario." & vbCrLf & vbCrLf & _
+        "Error: " & Err.Number & vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "AHORRO SOLIDARIO"
 
 End Function
+
+
+'==========================================================
+' OBTENER VALOR DE UN CAMPO
+'==========================================================
+Private Function ValorCampo( _
+    ByVal frm As Access.Form, _
+    ByVal nombreCampo As String) As String
+
+    Dim ctl As Access.Control
+
+    For Each ctl In frm.Controls
+
+        If ctl.Tag = nombreCampo Then
+
+            ValorCampo = Trim(Nz(ctl.Value, ""))
+
+            Exit Function
+
+        End If
+
+    Next ctl
+
+    ValorCampo = ""
+
+End Function
+
+
+'==========================================================
+' ENFOCAR CAMPO
+'==========================================================
+Private Sub EnfocarCampo( _
+    ByVal frm As Access.Form, _
+    ByVal nombreCampo As String)
+
+    Dim ctl As Access.Control
+
+    For Each ctl In frm.Controls
+
+        If ctl.Tag = nombreCampo Then
+
+            ctl.SetFocus
+
+            Exit Sub
+
+        End If
+
+    Next ctl
+
+End Sub
