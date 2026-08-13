@@ -1,10 +1,8 @@
-Option Explicit
-
 Public Function ObtenerRutaAccess() As String
 
     Dim ruta As String
 
-    ruta = ThisWorkbook.Path & "\database\AhorroSolidario_DEV.accdb"
+    ruta = ThisWorkbook.Path & "\..\database\AhorroSolidario_DEV.accdb"
 
     If Dir(ruta) = "" Then
 
@@ -22,53 +20,3 @@ Public Function ObtenerRutaAccess() As String
     ObtenerRutaAccess = ruta
 
 End Function
-
-
-Public Sub ProbarConexionAccess()
-
-    Dim cn As Object
-    Dim rutaBD As String
-
-    On Error GoTo ErrorHandler
-
-    rutaBD = ObtenerRutaAccess()
-
-    If rutaBD = "" Then Exit Sub
-
-    Set cn = CreateObject("ADODB.Connection")
-
-    cn.Open "Provider=Microsoft.ACE.OLEDB.12.0;" & _
-            "Data Source=" & rutaBD & ";" & _
-            "Persist Security Info=False;"
-
-    MsgBox "CONEXIÓN CORRECTA" & vbCrLf & vbCrLf & _
-           "Excel se conectó correctamente con Access." & vbCrLf & vbCrLf & _
-           "Base de datos:" & vbCrLf & _
-           rutaBD, _
-           vbInformation, _
-           "AHORRO SOLIDARIO"
-
-Salir:
-
-    On Error Resume Next
-
-    If Not cn Is Nothing Then
-        If cn.State <> 0 Then cn.Close
-    End If
-
-    Set cn = Nothing
-
-    Exit Sub
-
-
-ErrorHandler:
-
-    MsgBox "NO SE PUDO CONECTAR CON ACCESS." & vbCrLf & vbCrLf & _
-           "Error " & Err.Number & ":" & vbCrLf & _
-           Err.Description, _
-           vbCritical, _
-           "ERROR DE CONEXIÓN"
-
-    Resume Salir
-
-End Sub
