@@ -1,802 +1,156 @@
-Option Explicit
+'====================================================
+    ' RECORRER LOS CAMPOS DE ACCESS
+    '====================================================
 
-'===========================================================
-' CONFIGURACIÓN
-'===========================================================
+    For Each campo In rs.Fields
 
-Private Const NOMBRE_HOJA As String = "Frontend"
-Private Const NOMBRE_TABLA As String = "AHORRO_SOLIDARIO"
+        nombreCampo = campo.Name
 
-Private Const CELDA_RFC As String = "F12"
-Private Const CELDA_RFC_COMPLETO As String = "F16"
-Private Const CELDA_CURP As String = "F20"
-
-Private Const FILA_ENCABEZADOS As Long = 7
-Private Const FILA_RESULTADOS As Long = 8
-
-Private Const COLUMNA_RESULTADOS As Long = 11   ' K
-
-
-'===========================================================
-' OBTENER RUTA DE ACCESS
-'
-' Estructura en la PC del servicio:
-'
-' AhorroSolidario_Dev
-' ├── Fronted
-' │   └── Frontend_Buscador.xlsm
-' │
-' └── database
-'     └── AhorroSolidario_DEV.accdb
-'
-'===========================================================
-
-Public Function ObtenerRutaAccess() As String
-
-    Dim ruta As String
-
-    ruta = ThisWorkbook.Path & _
-           "\..\database\AhorroSolidario_DEV.accdb"
-
-    If Dir(ruta) = "" Then
-
-        MsgBox "No se encontró la base de Access." & vbCrLf & vbCrLf & _
-               "Se buscó en:" & vbCrLf & _
-               ruta, _
-               vbCritical, _
-               "BASE DE DATOS NO ENCONTRADA"
-
-        ObtenerRutaAccess = ""
-        Exit Function
-
-    End If
-
-    ObtenerRutaAccess = ruta
-
-End Function
-
-
-'===========================================================
-' PROBAR CONEXIÓN
-'===========================================================
-
-Public Sub ProbarConexionAccess()
-
-    Dim cn As Object
-    Dim rutaBD As String
-
-    On Error GoTo ErrorHandler
-
-    rutaBD = ObtenerRutaAccess()
-
-    If rutaBD = "" Then Exit Sub
-
-    Set cn = CreateObject("ADODB.Connection")
-
-    cn.Open "Provider=Microsoft.ACE.OLEDB.12.0;" & _
-            "Data Source=" & rutaBD & ";" & _
-            "Persist Security Info=False;"
-
-    MsgBox "CONEXIÓN CORRECTA" & vbCrLf & vbCrLf & _
-           "Excel se conectó correctamente con Access." & vbCrLf & vbCrLf & _
-           "Base de datos:" & vbCrLf & _
-           rutaBD, _
-           vbInformation, _
-           "AHORRO SOLIDARIO"
-
-Salir:
-
-    On Error Resume Next
-
-    If Not cn Is Nothing Then
-
-        If cn.State <> 0 Then
-            cn.Close
-        End If
-
-    End If
-
-    Set cn = Nothing
-
-    Exit Sub
-
-
-ErrorHandler:
-
-    MsgBox "NO SE PUDO CONECTAR CON ACCESS." & vbCrLf & vbCrLf & _
-           "Error " & Err.Number & ":" & vbCrLf & _
-           Err.Description, _
-           vbCritical, _
-           "ERROR DE CONEXIÓN"
-
-    Resume Salir
-
-End Sub
-
-
-'===========================================================
-' BUSCAR PERSONA
-'
-' Busca por:
-' RFC
-' RFC_COMPLETO
-' CURP
-'
-' Se puede utilizar uno de los tres.
-'
-' Si existen varios registros coincidentes,
-' muestra todos.
-'===========================================================
-
-Public Sub BuscarPersona()
-
-    Dim cn As Object
-    Dim rs As Object
-
-    Dim ws As Worksheet
-
-    Dim rutaBD As String
-    Dim sql As String
-    Dim condiciones As String
-
-    Dim rfc As String
-    Dim rfcCompleto As String
-    Dim curp As String
-
-    Dim fila As Long
-    Dim columna As Long
-
-    Dim nombreCampo As String
-    Dim celdaEncabezado As Range
-    Dim celdaResultado As Range
-
-    Dim cantidadResultados As Long
-
-    On Error GoTo ErrorHandler
-
-
-    '=======================================================
-    ' HOJA
-    '=======================================================
-
-    Set ws = ThisWorkbook.Worksheets(NOMBRE_HOJA)
-
-
-    '=======================================================
-    ' LEER CAMPOS DE BÚSQUEDA
-    '=======================================================
-
-    rfc = LimpiarIdentificador( _
-                ws.Range(CELDA_RFC).Value)
-
-    rfcCompleto = LimpiarIdentificador( _
-                ws.Range(CELDA_RFC_COMPLETO).Value)
-
-    curp = LimpiarIdentificador( _
-                ws.Range(CELDA_CURP).Value)
-
-
-    '=======================================================
-    ' VALIDAR
-    '=======================================================
-
-    If rfc = "" And _
-       rfcCompleto = "" And _
-       curp = "" Then
-
-        MsgBox "Ingresa al menos uno de los siguientes datos:" & _
-               vbCrLf & vbCrLf & _
-               "• RFC" & vbCrLf & _
-               "• RFC_COMPLETO" & vbCrLf & _
-               "• CURP", _
-               vbExclamation, _
-               "BUSCAR PERSONA"
-
-        Exit Sub
-
-    End If
-
-
-    '=======================================================
-    ' LIMPIAR RESULTADOS ANTERIORES
-    '=======================================================
-
-    LimpiarResultados
-
-
-    '=======================================================
-    ' OBTENER RUTA
-    '=======================================================
-
-    rutaBD = ObtenerRutaAccess()
-
-    If rutaBD = "" Then Exit Sub
-
-
-    '=======================================================
-    ' CONECTAR CON ACCESS
-    '=======================================================
-
-    Set cn = CreateObject("ADODB.Connection")
-
-    cn.Open "Provider=Microsoft.ACE.OLEDB.12.0;" & _
-            "Data Source=" & rutaBD & ";" & _
-            "Persist Security Info=False;"
-
-
-    '=======================================================
-    ' CONSTRUIR CONDICIONES
-    '=======================================================
-
-    condiciones = ""
-
-
-    '-------------------------------------------------------
-    ' RFC
-    '-------------------------------------------------------
-
-    If rfc <> "" Then
-
-        condiciones = _
-            "[RFC] = '" & _
-            Replace(rfc, "'", "''") & "'"
-
-    End If
-
-
-    '-------------------------------------------------------
-    ' RFC_COMPLETO
-    '-------------------------------------------------------
-
-    If rfcCompleto <> "" Then
-
-        If condiciones <> "" Then
-            condiciones = condiciones & " OR "
-        End If
-
-        condiciones = condiciones & _
-            "[RFC_COMPLETO] = '" & _
-            Replace(rfcCompleto, "'", "''") & "'"
-
-    End If
-
-
-    '-------------------------------------------------------
-    ' CURP
-    '-------------------------------------------------------
-
-    If curp <> "" Then
-
-        If condiciones <> "" Then
-            condiciones = condiciones & " OR "
-        End If
-
-        condiciones = condiciones & _
-            "[CURP] = '" & _
-            Replace(curp, "'", "''") & "'"
-
-    End If
-
-
-    '=======================================================
-    ' CONSULTA
-    '=======================================================
-
-    sql = "SELECT * FROM [" & _
-          NOMBRE_TABLA & _
-          "] WHERE " & condiciones
-
-
-    '=======================================================
-    ' EJECUTAR
-    '=======================================================
-
-    Set rs = CreateObject("ADODB.Recordset")
-
-    rs.Open sql, cn, 1, 1
-
-
-    '=======================================================
-    ' SIN RESULTADOS
-    '=======================================================
-
-    If rs.EOF Then
-
-        MsgBox "No se encontró ningún registro." & _
-               vbCrLf & vbCrLf & _
-               "Verifica el RFC, RFC_COMPLETO o CURP.", _
-               vbInformation, _
-               "SIN RESULTADOS"
-
-        GoTo Salir
-
-    End If
-
-
-    '=======================================================
-    ' ESCRIBIR RESULTADOS
-    '=======================================================
-
-    fila = FILA_RESULTADOS
-
-    cantidadResultados = 0
-
-
-    Do While Not rs.EOF
-
-        cantidadResultados = _
-            cantidadResultados + 1
-
-
-        '---------------------------------------------------
-        ' RECORRER CAMPOS DE ACCESS
-        '---------------------------------------------------
-
-        For columna = 0 To rs.Fields.Count - 1
-
-            nombreCampo = _
-                rs.Fields(columna).Name
-
-
-            '------------------------------------------------
-            ' BUSCAR ENCABEZADO EN FILA 7
-            '------------------------------------------------
-
-            Set celdaEncabezado = Nothing
-
-            Set celdaEncabezado = _
-                ws.Rows(FILA_ENCABEZADOS).Find( _
-                    What:=nombreCampo, _
-                    After:=ws.Cells(FILA_ENCABEZADOS, 1), _
-                    LookIn:=xlValues, _
-                    LookAt:=xlWhole, _
-                    SearchOrder:=xlByColumns, _
-                    SearchDirection:=xlNext, _
-                    MatchCase:=False)
-
-
-            '------------------------------------------------
-            ' SI ENCONTRÓ EL ENCABEZADO
-            '------------------------------------------------
-
-            If Not celdaEncabezado Is Nothing Then
-
-                Set celdaResultado = _
-                    ws.Cells( _
-                        fila, _
-                        celdaEncabezado.Column)
-
-
-                '--------------------------------------------
-                ' CELDA COMBINADA
-                '--------------------------------------------
-
-                If celdaResultado.MergeCells Then
-
-                    If IsNull( _
-                        rs.Fields(columna).Value) Then
-
-                        celdaResultado.MergeArea.Cells(1, 1).Value = ""
-
-                    Else
-
-                        celdaResultado.MergeArea.Cells(1, 1).Value = _
-                            rs.Fields(columna).Value
-
-                    End If
-
-
-                '--------------------------------------------
-                ' CELDA NORMAL
-                '--------------------------------------------
-
-                Else
-
-                    If IsNull( _
-                        rs.Fields(columna).Value) Then
-
-                        celdaResultado.Value = ""
-
-                    Else
-
-                        celdaResultado.Value = _
-                            rs.Fields(columna).Value
-
-                    End If
-
-                End If
-
-            End If
-
-        Next columna
-
-
-        '---------------------------------------------------
-        ' SIGUIENTE REGISTRO
-        '---------------------------------------------------
-
-        fila = fila + 1
-
-        rs.MoveNext
-
-    Loop
-
-
-    '=======================================================
-    ' ESTADO
-    '=======================================================
-
-    ws.Range("K29").Value = _
-        "Estado: " & _
-        cantidadResultados & _
-        " registro(s) encontrado(s)."
-
-
-Salir:
-
-    On Error Resume Next
-
-
-    If Not rs Is Nothing Then
-
-        If rs.State <> 0 Then
-            rs.Close
-        End If
-
-    End If
-
-
-    If Not cn Is Nothing Then
-
-        If cn.State <> 0 Then
-            cn.Close
-        End If
-
-    End If
-
-
-    Set rs = Nothing
-    Set cn = Nothing
-    Set ws = Nothing
-
-    Exit Sub
-
-
-ErrorHandler:
-
-    MsgBox "Ocurrió un error durante la búsqueda." & _
-           vbCrLf & vbCrLf & _
-           "Error " & Err.Number & ":" & _
-           vbCrLf & _
-           Err.Description, _
-           vbCritical, _
-           "ERROR DE BÚSQUEDA"
-
-    Resume Salir
-
-End Sub
-
-
-'===========================================================
-' BOTÓN LIMPIAR
-'
-' Limpia:
-' RFC
-' RFC_COMPLETO
-' CURP
-' Resultados
-' Estado
-'
-' NO modifica Access.
-'===========================================================
-
-Public Sub LimpiarBusqueda()
-
-    Dim ws As Worksheet
-
-    On Error GoTo ErrorHandler
-
-
-    Application.ScreenUpdating = False
-    Application.EnableEvents = False
-    Application.Calculation = xlCalculationManual
-
-
-    Set ws = _
-        ThisWorkbook.Worksheets(NOMBRE_HOJA)
-
-
-    '=======================================================
-    ' LIMPIAR RFC
-    '=======================================================
-
-    LimpiarCeldaSegura _
-        ws.Range(CELDA_RFC)
-
-
-    '=======================================================
-    ' LIMPIAR RFC_COMPLETO
-    '=======================================================
-
-    LimpiarCeldaSegura _
-        ws.Range(CELDA_RFC_COMPLETO)
-
-
-    '=======================================================
-    ' LIMPIAR CURP
-    '=======================================================
-
-    LimpiarCeldaSegura _
-        ws.Range(CELDA_CURP)
-
-
-    '=======================================================
-    ' LIMPIAR RESULTADOS
-    '=======================================================
-
-    LimpiarResultados
-
-
-    '=======================================================
-    ' LIMPIAR ESTADO
-    '=======================================================
-
-    LimpiarCeldaSegura _
-        ws.Range("K29")
-
-
-Salir:
-
-    Application.Calculation = xlCalculationAutomatic
-    Application.EnableEvents = True
-    Application.ScreenUpdating = True
-
-    Set ws = Nothing
-
-    Exit Sub
-
-
-ErrorHandler:
-
-    Application.Calculation = xlCalculationAutomatic
-    Application.EnableEvents = True
-    Application.ScreenUpdating = True
-
-    MsgBox "No se pudo limpiar la búsqueda." & _
-           vbCrLf & vbCrLf & _
-           "Error " & Err.Number & ":" & _
-           vbCrLf & _
-           Err.Description, _
-           vbCritical, _
-           "ERROR AL LIMPIAR"
-
-End Sub
-
-
-'===========================================================
-' LIMPIAR RESULTADOS
-'
-' Protegido contra celdas combinadas.
-'===========================================================
-
-Public Sub LimpiarResultados()
-
-    Dim ws As Worksheet
-
-    Dim ultimaFila As Long
-    Dim ultimaColumna As Long
-
-    Dim rangoResultados As Range
-    Dim celda As Range
-
-    Dim direccionesLimpiadas As Object
-
-    On Error GoTo Salir
-
-
-    Set ws = _
-        ThisWorkbook.Worksheets(NOMBRE_HOJA)
-
-
-    '=======================================================
-    ' ÚLTIMA FILA CON DATOS
-    '=======================================================
-
-    ultimaFila = _
-        ws.Cells( _
-            ws.Rows.Count, _
-            COLUMNA_RESULTADOS _
-        ).End(xlUp).Row
-
-
-    '=======================================================
-    ' ÚLTIMA COLUMNA DE ENCABEZADOS
-    '=======================================================
-
-    ultimaColumna = _
-        ws.Cells( _
-            FILA_ENCABEZADOS, _
-            ws.Columns.Count _
-        ).End(xlToLeft).Column
-
-
-    If ultimaFila < FILA_RESULTADOS Then
-        GoTo Salir
-    End If
-
-
-    If ultimaColumna < COLUMNA_RESULTADOS Then
-        GoTo Salir
-    End If
-
-
-    If ultimaFila > 1000 Then
-        ultimaFila = 1000
-    End If
-
-
-    Set rangoResultados = _
-        ws.Range( _
-            ws.Cells( _
-                FILA_RESULTADOS, _
-                COLUMNA_RESULTADOS), _
-            ws.Cells( _
-                ultimaFila, _
-                ultimaColumna))
-
-
-    '=======================================================
-    ' DICCIONARIO PARA NO LIMPIAR DOS VECES
-    ' LAS ÁREAS COMBINADAS
-    '=======================================================
-
-    Set direccionesLimpiadas = _
-        CreateObject("Scripting.Dictionary")
-
-
-    For Each celda In rangoResultados.Cells
-
-        If celda.MergeCells Then
-
-            If Not direccionesLimpiadas.Exists( _
-                celda.MergeArea.Address) Then
-
-                celda.MergeArea.ClearContents
-
-                direccionesLimpiadas.Add _
-                    celda.MergeArea.Address, True
-
-            End If
-
+        If IsNull(campo.Value) Then
+            valor = ""
         Else
-
-            celda.ClearContents
-
+            valor = campo.Value
         End If
 
-    Next celda
+
+        '-----------------------------------------------
+        ' DATOS DE LA PERSONA
+        '-----------------------------------------------
+
+        Select Case nombreCampo
+
+            Case "RFC"
+                If fila1 > 0 Then ws.Cells(fila1, 2).Value = valor
+
+            Case "RFC_COMPLETO"
+                If fila1 > 0 Then ws.Cells(fila1, 3).Value = valor
+
+            Case "HOM"
+                If fila1 > 0 Then ws.Cells(fila1, 4).Value = valor
+
+            Case "PATERNO"
+                If fila1 > 0 Then ws.Cells(fila1, 5).Value = valor
+
+            Case "MATERNO"
+                If fila1 > 0 Then ws.Cells(fila1, 6).Value = valor
+
+            Case "NOMBRE"
+                If fila1 > 0 Then ws.Cells(fila1, 7).Value = valor
+
+            Case "CURP"
+                If fila1 > 0 Then ws.Cells(fila1, 8).Value = valor
+
+            Case "NIVEL"
+                If fila1 > 0 Then ws.Cells(fila1, 9).Value = valor
+
+            Case "UR"
+                If fila1 > 0 Then ws.Cells(fila1, 10).Value = valor
+
+            Case "POR_MEDIO_DE"
+                If fila1 > 0 Then ws.Cells(fila1, 11).Value = valor
 
 
-Salir:
+        '-----------------------------------------------
+        ' DATOS DEL AHORRO
+        '-----------------------------------------------
 
-    Set direccionesLimpiadas = Nothing
-    Set rangoResultados = Nothing
-    Set ws = Nothing
+            Case "SOLICITA_PORCENTAJE"
+                If fila2 > 0 Then ws.Cells(fila2, 2).Value = valor
+
+            Case "PORCENTAJE"
+                If fila2 > 0 Then ws.Cells(fila2, 3).Value = valor
+
+            Case "QNA"
+                If fila2 > 0 Then ws.Cells(fila2, 4).Value = valor
+
+            Case "AÑO"
+                If fila2 > 0 Then ws.Cells(fila2, 5).Value = valor
+
+            Case "C_B"
+                If fila2 > 0 Then ws.Cells(fila2, 6).Value = valor
+
+            Case "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO"
+                If fila2 > 0 Then ws.Cells(fila2, 7).Value = valor
+
+            Case "FECHA_APLICAR_AHORRO"
+                If fila2 > 0 Then ws.Cells(fila2, 8).Value = valor
+
+            Case "FECHA_HOY"
+                If fila2 > 0 Then ws.Cells(fila2, 9).Value = valor
+
+            Case "RESULTADO_ANALISIS"
+                If fila2 > 0 Then ws.Cells(fila2, 10).Value = valor
+
+            Case "QNA_APLICACION"
+                If fila2 > 0 Then ws.Cells(fila2, 11).Value = valor
+
+
+        '-----------------------------------------------
+        ' RÉGIMEN / APLICACIÓN
+        '-----------------------------------------------
+
+            Case "OBSERVACIONES"
+                If fila3 > 0 Then ws.Cells(fila3, 2).Value = valor
+
+            Case "REGIMEN_EN_SINAVID_ISSSTE"
+                If fila3 > 0 Then ws.Cells(fila3, 3).Value = valor
+
+            Case "REGIMEN_EN_SIRI_ES_EL_QUE_MAS_IMPORTANCIA_TIENE_PARA_APLIC"
+                If fila3 > 0 Then ws.Cells(fila3, 4).Value = valor
+
+            Case "DIA_EN_QUE_SE_TRABAJA_LA_SOLICITUD"
+                If fila3 > 0 Then ws.Cells(fila3, 5).Value = valor
+
+            Case "SARH_APLICACION_DE_AHORRO_SOLIDARIO"
+                If fila3 > 0 Then ws.Cells(fila3, 6).Value = valor
+
+            Case "ACTIVO_INACTIVO_EN_ISSSTE_PARA_DAR_ALTA_O_BAJA"
+                If fila3 > 0 Then ws.Cells(fila3, 7).Value = valor
+
+            Case "CURP'S_HISTORICAS_POR_SI_NO_SE_PUEDE_ACCEDER_A_SINAVID"
+                If fila3 > 0 Then ws.Cells(fila3, 8).Value = valor
+
+            Case "SOLICITUDES_POR_OFICIO"
+                If fila3 > 0 Then ws.Cells(fila3, 9).Value = valor
+
+            Case "OFICIO_FOLIO"
+                If fila3 > 0 Then ws.Cells(fila3, 10).Value = valor
+
+            Case "CORREO_ELECTRONICO"
+                If fila3 > 0 Then ws.Cells(fila3, 11).Value = valor
+
+            Case "DESCARGO_SAC"
+                'No hay columna disponible en el diseño actual.
+                'Se agregará al ajustar la tabla.
+
+
+        '-----------------------------------------------
+        ' CONTROL Y SEGUIMIENTO
+        '-----------------------------------------------
+
+            Case "AREA_DIRECCION"
+                If fila4 > 0 Then ws.Cells(fila4, 2).Value = valor
+
+            Case "CONTEO_OFICIOS"
+                If fila4 > 0 Then ws.Cells(fila4, 3).Value = valor
+
+            Case "MES_DE_CAPTURA"
+                If fila4 > 0 Then ws.Cells(fila4, 4).Value = valor
+
+            Case "ALTA_BAJA"
+                If fila4 > 0 Then ws.Cells(fila4, 5).Value = valor
+
+            Case "REVISO"
+                If fila4 > 0 Then ws.Cells(fila4, 6).Value = valor
+
+            Case "ESCANER_-_SEPARADO"
+                If fila4 > 0 Then ws.Cells(fila4, 7).Value = valor
+
+            Case "SEXO"
+                If fila4 > 0 Then ws.Cells(fila4, 8).Value = valor
+
+        End Select
+
+    Next campo
 
 End Sub
-
-
-'===========================================================
-' LIMPIAR CELDA SEGURA
-'
-' Sirve para F12, F16, F20 y K29 aunque estén combinadas.
-'===========================================================
-
-Private Sub LimpiarCeldaSegura( _
-    ByVal celda As Range)
-
-    On Error Resume Next
-
-    If celda.MergeCells Then
-
-        celda.MergeArea.ClearContents
-
-    Else
-
-        celda.ClearContents
-
-    End If
-
-End Sub
-
-
-'===========================================================
-' NORMALIZAR RFC / CURP
-'
-' Permite pegar:
-'
-' peme580105ju7
-' PEME580105ju7
-' "peme580105ju7"
-' peme 580105 ju7
-'
-' Y lo convierte a:
-'
-' PEME580105JU7
-'===========================================================
-
-Public Function LimpiarIdentificador( _
-    ByVal valor As Variant) As String
-
-    Dim texto As String
-
-
-    If IsNull(valor) Or IsEmpty(valor) Then
-
-        LimpiarIdentificador = ""
-
-        Exit Function
-
-    End If
-
-
-    texto = CStr(valor)
-
-
-    '-------------------------------------------------------
-    ' QUITAR ESPACIOS EXTERNOS
-    '-------------------------------------------------------
-
-    texto = Trim(texto)
-
-
-    '-------------------------------------------------------
-    ' QUITAR COMILLAS
-    '-------------------------------------------------------
-
-    texto = Replace( _
-                texto, _
-                """", _
-                "")
-
-    texto = Replace( _
-                texto, _
-                "'", _
-                "")
-
-
-    '-------------------------------------------------------
-    ' QUITAR SALTOS DE LÍNEA
-    '-------------------------------------------------------
-
-    texto = Replace( _
-                texto, _
-                vbCr, _
-                "")
-
-    texto = Replace( _
-                texto, _
-                vbLf, _
-                "")
-
-
-    '-------------------------------------------------------
-    ' QUITAR ESPACIOS INTERNOS
-    '-------------------------------------------------------
-
-    texto = Replace( _
-                texto, _
-                " ", _
-                "")
-
-
-    '-------------------------------------------------------
-    ' MAYÚSCULAS
-    '-------------------------------------------------------
-
-    texto = UCase(texto)
-
-
-    LimpiarIdentificador = texto
-
-End Function
