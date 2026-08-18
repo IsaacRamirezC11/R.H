@@ -1,0 +1,7 @@
+error: The normalization form should be one of NFC, NFD, NFKC, NFKD.
+
+[224, 9] Invoking console.log inside of a loop could lead to slow performance of the script. 
+For more information, please visit https://aka.ms/office-scripts-performance
+
+[231, 9] Invoking console.log inside of a loop could lead to slow performance of the script. 
+For more information, please visit https://aka.ms/office-scripts-performance
