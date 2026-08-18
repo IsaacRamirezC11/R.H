@@ -1,7 +1,258 @@
-error: The normalization form should be one of NFC, NFD, NFKC, NFKD.
+function main(workbook: ExcelScript.Workbook) {
 
-[224, 9] Invoking console.log inside of a loop could lead to slow performance of the script. 
-For more information, please visit https://aka.ms/office-scripts-performance
+  // ====================================================
+  // HOJA ACTIVA
+  // ====================================================
 
-[231, 9] Invoking console.log inside of a loop could lead to slow performance of the script. 
-For more information, please visit https://aka.ms/office-scripts-performance
+  const hoja = workbook.getActiveWorksheet();
+  const rango = hoja.getUsedRange();
+
+  if (!rango) {
+    console.log("La hoja está vacía.");
+    return;
+  }
+
+  const datos = rango.getValues();
+
+  if (datos.length === 0) {
+    console.log("No se encontraron datos.");
+    return;
+  }
+
+
+  // ====================================================
+  // NORMALIZAR ENCABEZADOS
+  // ====================================================
+
+  function normalizar(texto: string): string {
+
+    return texto
+      .toString()
+      .toUpperCase()
+      .trim()
+      .replace(/Á/g, "A")
+      .replace(/É/g, "E")
+      .replace(/Í/g, "I")
+      .replace(/Ó/g, "O")
+      .replace(/Ú/g, "U")
+      .replace(/Ü/g, "U")
+      .replace(/Ñ/g, "N")
+      .replace(/[^A-Z0-9]/g, "");
+
+  }
+
+
+  // ====================================================
+  // EQUIVALENCIAS
+  // ====================================================
+
+  const equivalencias: { [key: string]: string } = {
+
+    // PERSONA
+    "RFC": "RFC",
+    "RFCFISCAL": "RFC",
+    "REGISTROFEDERALDECONTRIBUYENTES": "RFC",
+
+    "RFCCOMPLETO": "RFC_COMPLETO",
+
+    "HOM": "HOM",
+    "HOMOCLAVE": "HOM",
+
+    "PATERNO": "PATERNO",
+    "APELLIDOPATERNO": "PATERNO",
+    "APPATERNO": "PATERNO",
+
+    "MATERNO": "MATERNO",
+    "APELLIDOMATERNO": "MATERNO",
+    "APMATERNO": "MATERNO",
+
+    "NOMBRE": "NOMBRE",
+    "NOMBRES": "NOMBRE",
+    "NOMBRECOMPLETO": "NOMBRE",
+
+    "CURP": "CURP",
+
+    "NIVEL": "NIVEL",
+
+    "UR": "UR",
+    "UNIDAD": "UR",
+    "UNIDADRESPONSABLE": "UR",
+
+    "PORMEDIODE": "POR_MEDIO_DE",
+    "MEDIO": "POR_MEDIO_DE",
+
+
+    // AHORRO
+    "SOLICITAPORCENTAJE": "SOLICITA_PORCENTAJE",
+    "PORCENTAJESOLICITADO": "SOLICITA_PORCENTAJE",
+
+    "PORCENTAJE": "PORCENTAJE",
+    "PORC": "PORCENTAJE",
+
+    "QNA": "QNA",
+    "QUINCENA": "QNA",
+    "QUINCENADEAPLICACION": "QNA",
+
+    "ANO": "AÑO",
+    "ANIO": "AÑO",
+    "YEAR": "AÑO",
+
+    "CB": "C_B",
+
+    "FECHASOLICITAAHORO": "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO",
+    "FECHADEINGRESO": "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO",
+
+    "FECHAAPLICARAHORRO": "FECHA_APLICAR_AHORRO",
+    "FECHAAPLICACION": "FECHA_APLICAR_AHORRO",
+
+    "FECHAHOY": "FECHA_HOY",
+
+    "RESULTADOANALISIS": "RESULTADO_ANALISIS",
+    "RESULTADO": "RESULTADO_ANALISIS",
+
+    "QNAAPLICACION": "QNA_APLICACION",
+    "QUINCENAAPLICACION": "QNA_APLICACION",
+
+
+    // REGIMEN / APLICACION
+    "OBSERVACIONES": "OBSERVACIONES",
+    "OBSERVACION": "OBSERVACIONES",
+
+    "REGIMENENSINAVIDISSSTE": "REGIMEN_EN_SINAVID_ISSSTE",
+    "REGIMENSINAVIDISSSTE": "REGIMEN_EN_SINAVID_ISSSTE",
+
+    "REGIMENSIRI": "REGIMEN_EN_SIRI_ES_EL_QUE_MAS_IMPORTANCIA_TIENE_PARA_APLIC",
+    "REGIMENENSIRI": "REGIMEN_EN_SIRI_ES_EL_QUE_MAS_IMPORTANCIA_TIENE_PARA_APLIC",
+
+    "DIAENQUESETRABAJALASOLICITUD": "DIA_EN_QUE_SE_TRABAJA_LA_SOLICITUD",
+    "DIADETRABAJO": "DIA_EN_QUE_SE_TRABAJA_LA_SOLICITUD",
+
+    "SARH": "SARH_APLICACION_DE_AHORRO_SOLIDARIO",
+    "SARHAPLICACIONDEAHORROSOLIDARIO": "SARH_APLICACION_DE_AHORRO_SOLIDARIO",
+
+    "ACTIVOINACTIVO": "ACTIVO_INACTIVO_EN_ISSSTE_PARA_DAR_ALTA_O_BAJA",
+    "ACTIVOINACTIVOENISSSTE": "ACTIVO_INACTIVO_EN_ISSSTE_PARA_DAR_ALTA_O_BAJA",
+
+    "CURPSHISTORICAS": "CURP'S_HISTORICAS_POR_SI_NO_SE_PUEDE_ACCEDER_A_SINAVID",
+    "CURPHISTORICA": "CURP'S_HISTORICAS_POR_SI_NO_SE_PUEDE_ACCEDER_A_SINAVID",
+
+    "SOLICITACIONESPOROFICIO": "SOLICITUDES_POR_OFICIO",
+    "SOLICITUDESPOROFICIO": "SOLICITUDES_POR_OFICIO",
+    "OFICIO": "SOLICITUDES_POR_OFICIO",
+
+    "OFICIOFOLIO": "OFICIO_FOLIO",
+    "FOLIO": "OFICIO_FOLIO",
+
+    "CORREOELECTRONICO": "CORREO_ELECTRONICO",
+    "CORREO": "CORREO_ELECTRONICO",
+    "EMAIL": "CORREO_ELECTRONICO",
+
+    "DESCARGOSAC": "DESCARGO_SAC",
+
+
+    // CONTROL
+    "AREADIRECCION": "AREA_DIRECCION",
+    "AREA": "AREA_DIRECCION",
+    "DIRECCION": "AREA_DIRECCION",
+
+    "CONTEOOFICIOS": "CONTEO_OFICIOS",
+    "CONTEO": "CONTEO_OFICIOS",
+
+    "MESDECAPTURA": "MES_DE_CAPTURA",
+    "MESCAPTURA": "MES_DE_CAPTURA",
+
+    "ALTABAJA": "ALTA_BAJA",
+    "MOVIMIENTO": "ALTA_BAJA",
+
+    "REVISO": "REVISO",
+    "REVISOR": "REVISO",
+
+    "ESCANERSEPARADO": "ESCANER_-_SEPARADO",
+    "ESCANER": "ESCANER_-_SEPARADO",
+    "SCAN": "ESCANER_-_SEPARADO",
+
+    "SEXO": "SEXO",
+    "GENERO": "SEXO"
+
+  };
+
+
+  // ====================================================
+  // LEER ENCABEZADOS
+  // ====================================================
+
+  const encabezados = datos[0];
+
+  const resultados: string[] = [];
+
+  resultados.push(
+    "=========================================="
+  );
+
+  resultados.push(
+    "       ANÁLISIS DE ENCABEZADOS"
+  );
+
+  resultados.push(
+    "=========================================="
+  );
+
+
+  // ====================================================
+  // ANALIZAR CADA ENCABEZADO
+  // ====================================================
+
+  for (let i = 0; i < encabezados.length; i++) {
+
+    const original = String(encabezados[i]);
+
+    const normalizado = normalizar(original);
+
+    const destino = equivalencias[normalizado];
+
+
+    if (destino) {
+
+      resultados.push(
+        "✓ " +
+        original +
+        "  →  " +
+        destino
+      );
+
+    } else {
+
+      resultados.push(
+        "? " +
+        original +
+        "  →  NO IDENTIFICADO"
+      );
+
+    }
+
+  }
+
+
+  resultados.push(
+    "=========================================="
+  );
+
+  resultados.push(
+    "ANÁLISIS TERMINADO"
+  );
+
+  resultados.push(
+    "=========================================="
+  );
+
+
+  // ====================================================
+  // MOSTRAR TODOS LOS RESULTADOS DE UNA SOLA VEZ
+  // ====================================================
+
+  console.log(resultados.join("\n"));
+
+}
+
+________
+
