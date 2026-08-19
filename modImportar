@@ -1,0 +1,1122 @@
+Option Explicit
+
+'========================================================
+' IMPORTAR ARCHIVO EXTERNO
+'
+' Primera versión:
+' - Excel XLSX/XLS
+' - Busca encabezados aunque no estén en la fila 1
+' - Compara contra Access
+' - Si no existe o es más reciente:
+'       lo carga en REGISTRAR
+' - NO modifica Access
+'
+' PDF:
+' se deja reservado para la segunda etapa.
+'========================================================
+
+Public Sub ImportarArchivoExterno()
+
+    Dim fd As FileDialog
+    Dim archivo As String
+    Dim extension As String
+
+    On Error GoTo ErrorHandler
+
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+
+    With fd
+
+        .Title = "SELECCIONAR ARCHIVO PARA IMPORTAR"
+
+        .AllowMultiSelect = False
+
+        .Filters.Clear
+
+        .Filters.Add "Archivos de Excel", "*.xlsx;*.xls;*.xlsm"
+
+        .Filters.Add "Archivos PDF", "*.pdf"
+
+        If .Show <> -1 Then
+            Exit Sub
+        End If
+
+        archivo = .SelectedItems(1)
+
+    End With
+
+    extension = LCase$(Mid$(archivo, InStrRev(archivo, ".") + 1))
+
+    Select Case extension
+
+        Case "xlsx", "xls", "xlsm"
+
+            ImportarExcel archivo
+
+        Case "pdf"
+
+            MsgBox _
+                "EL ARCHIVO PDF FUE SELECCIONADO CORRECTAMENTE." & _
+                vbCrLf & vbCrLf & _
+                "LA LECTURA AUTOMÁTICA DE PDF SE IMPLEMENTARÁ " & _
+                "EN LA SIGUIENTE ETAPA.", _
+                vbInformation, _
+                "IMPORTAR PDF"
+
+        Case Else
+
+            MsgBox _
+                "TIPO DE ARCHIVO NO COMPATIBLE.", _
+                vbExclamation, _
+                "IMPORTAR"
+
+    End Select
+
+    Exit Sub
+
+ErrorHandler:
+
+    MsgBox _
+        "NO SE PUDO SELECCIONAR EL ARCHIVO." & _
+        vbCrLf & vbCrLf & _
+        "ERROR " & Err.Number & ":" & _
+        vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+End Sub
+
+
+'========================================================
+' IMPORTAR EXCEL
+'========================================================
+
+Private Sub ImportarExcel(ByVal rutaArchivo As String)
+
+    Dim wbOrigen As Workbook
+    Dim wsOrigen As Worksheet
+    Dim wsDestino As Worksheet
+
+    Dim ultimaFila As Long
+    Dim ultimaColumna As Long
+
+    Dim filaEncabezados As Long
+    Dim fila As Long
+
+    Dim encabezados As Object
+    Dim equivalencias As Object
+
+    Dim i As Long
+    Dim encabezado As String
+    Dim campoDestino As String
+
+    Dim filaDestino As Long
+
+    Dim rfc As String
+    Dim curp As String
+    Dim rfcCompleto As String
+
+    Dim encontradoAccess As Boolean
+    Dim fechaExterna As Variant
+    Dim fechaAccess As Variant
+
+    On Error GoTo ErrorHandler
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+    Set wsDestino = _
+        ThisWorkbook.Worksheets("REGISTRAR")
+
+    '====================================================
+    ' ABRIR ARCHIVO EXTERNO
+    '====================================================
+
+    Set wbOrigen = _
+        Workbooks.Open( _
+            Filename:=rutaArchivo, _
+            ReadOnly:=True _
+        )
+
+    '====================================================
+    ' TOMAR LA PRIMERA HOJA
+    '====================================================
+
+    Set wsOrigen = wbOrigen.Worksheets(1)
+
+    '====================================================
+    ' ENCONTRAR ÚLTIMA FILA / COLUMNA
+    '====================================================
+
+    ultimaFila = _
+        wsOrigen.Cells( _
+            wsOrigen.Rows.Count, _
+            1 _
+        ).End(xlUp).Row
+
+    ultimaColumna = _
+        wsOrigen.Cells( _
+            1, _
+            wsOrigen.Columns.Count _
+        ).End(xlToLeft).Column
+
+
+    '====================================================
+    ' BUSCAR FILA DE ENCABEZADOS
+    '====================================================
+
+    filaEncabezados = _
+        BuscarFilaEncabezados( _
+            wsOrigen, _
+            ultimaFila, _
+            ultimaColumna _
+        )
+
+    If filaEncabezados = 0 Then
+
+        MsgBox _
+            "NO SE ENCONTRÓ LA FILA DE ENCABEZADOS.", _
+            vbExclamation, _
+            "IMPORTAR"
+
+        GoTo Salir
+
+    End If
+
+
+    '====================================================
+    ' CREAR EQUIVALENCIAS
+    '====================================================
+
+    Set equivalencias = CrearEquivalencias()
+
+    Set encabezados = _
+        CreateObject("Scripting.Dictionary")
+
+    encabezados.CompareMode = 1
+
+
+    '====================================================
+    ' LEER ENCABEZADOS
+    '====================================================
+
+    For i = 1 To ultimaColumna
+
+        encabezado = _
+            NormalizarTexto( _
+                CStr( _
+                    wsOrigen.Cells( _
+                        filaEncabezados, _
+                        i _
+                    ).Value _
+                ) _
+            )
+
+        If encabezado <> "" Then
+
+            If equivalencias.Exists(encabezado) Then
+
+                encabezados.Add _
+                    i, _
+                    equivalencias(encabezado)
+
+            End If
+
+        End If
+
+    Next i
+
+
+    If encabezados.Count = 0 Then
+
+        MsgBox _
+            "NO SE ENCONTRARON ENCABEZADOS COMPATIBLES.", _
+            vbExclamation, _
+            "IMPORTAR"
+
+        GoTo Salir
+
+    End If
+
+
+    '====================================================
+    ' RECORRER TODOS LOS REGISTROS
+    '====================================================
+
+    For fila = filaEncabezados + 1 To ultimaFila
+
+        rfc = ""
+        curp = ""
+        rfcCompleto = ""
+
+        '--------------------------------------------
+        ' OBTENER IDENTIFICADORES
+        '--------------------------------------------
+
+        For i = 1 To ultimaColumna
+
+            If encabezados.Exists(i) Then
+
+                campoDestino = _
+                    encabezados(i)
+
+                Select Case campoDestino
+
+                    Case "RFC"
+
+                        rfc = Trim( _
+                            UCase( _
+                                CStr( _
+                                    wsOrigen.Cells( _
+                                        fila, i _
+                                    ).Value _
+                                ) _
+                            ) _
+                        )
+
+                    Case "RFC_COMPLETO"
+
+                        rfcCompleto = Trim( _
+                            UCase( _
+                                CStr( _
+                                    wsOrigen.Cells( _
+                                        fila, i _
+                                    ).Value _
+                                ) _
+                            ) _
+                        )
+
+                    Case "CURP"
+
+                        curp = Trim( _
+                            UCase( _
+                                CStr( _
+                                    wsOrigen.Cells( _
+                                        fila, i _
+                                    ).Value _
+                                ) _
+                            ) _
+                        )
+
+                End Select
+
+            End If
+
+        Next i
+
+
+        '--------------------------------------------
+        ' IGNORAR FILA VACÍA
+        '--------------------------------------------
+
+        If rfc = "" And _
+           rfcCompleto = "" And _
+           curp = "" Then
+
+            GoTo SiguienteFila
+
+        End If
+
+
+        '================================================
+        ' FECHA DEL ARCHIVO EXTERNO
+        '================================================
+
+        fechaExterna = _
+            ObtenerFechaExterna( _
+                wsOrigen, _
+                fila, _
+                encabezados _
+            )
+
+
+        '================================================
+        ' COMPARAR CONTRA ACCESS
+        '================================================
+
+        encontradoAccess = False
+
+        fechaAccess = Empty
+
+        If rfc <> "" Then
+
+            encontradoAccess = _
+                BuscarRegistroAccess( _
+                    rfc, _
+                    "", _
+                    "", _
+                    fechaAccess _
+                )
+
+        End If
+
+        If Not encontradoAccess And _
+           curp <> "" Then
+
+            encontradoAccess = _
+                BuscarRegistroAccess( _
+                    "", _
+                    curp, _
+                    "", _
+                    fechaAccess _
+                )
+
+        End If
+
+        If Not encontradoAccess And _
+           rfcCompleto <> "" Then
+
+            encontradoAccess = _
+                BuscarRegistroAccess( _
+                    "", _
+                    "", _
+                    rfcCompleto, _
+                    fechaAccess _
+                )
+
+        End If
+
+
+        '================================================
+        ' DECIDIR SI SE CARGA EN REGISTRAR
+        '================================================
+
+        If Not encontradoAccess Then
+
+            'Nuevo registro
+            filaDestino = _
+                SiguienteFilaRegistrar(wsDestino)
+
+            CopiarRegistroARegistrar _
+                wsOrigen, _
+                wsDestino, _
+                fila, _
+                filaDestino, _
+                encabezados
+
+        Else
+
+            '--------------------------------------------
+            ' EXISTE
+            '--------------------------------------------
+
+            If EsFechaMasReciente( _
+                fechaExterna, _
+                fechaAccess _
+            ) Then
+
+                filaDestino = _
+                    SiguienteFilaRegistrar(wsDestino)
+
+                CopiarRegistroARegistrar _
+                    wsOrigen, _
+                    wsDestino, _
+                    fila, _
+                    filaDestino, _
+                    encabezados
+
+            End If
+
+        End If
+
+
+SiguienteFila:
+
+    Next fila
+
+
+    MsgBox _
+        "IMPORTACIÓN TERMINADA." & _
+        vbCrLf & vbCrLf & _
+        "LOS REGISTROS NUEVOS O MÁS RECIENTES " & _
+        "FUERON CARGADOS EN REGISTRAR PARA REVISIÓN.", _
+        vbInformation, _
+        "IMPORTAR"
+
+Salir:
+
+    On Error Resume Next
+
+    If Not wbOrigen Is Nothing Then
+
+        wbOrigen.Close SaveChanges:=False
+
+    End If
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    MsgBox _
+        "ERROR DURANTE LA IMPORTACIÓN." & _
+        vbCrLf & vbCrLf & _
+        "ERROR " & Err.Number & ":" & _
+        vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "ERROR DE IMPORTACIÓN"
+
+    Resume Salir
+
+End Sub
+
+
+'========================================================
+' BUSCAR FILA DE ENCABEZADOS
+'========================================================
+
+Private Function BuscarFilaEncabezados( _
+    ByVal ws As Worksheet, _
+    ByVal ultimaFila As Long, _
+    ByVal ultimaColumna As Long _
+) As Long
+
+    Dim fila As Long
+    Dim columna As Long
+
+    Dim texto As String
+
+    Dim tieneRFC As Boolean
+    Dim tieneCURP As Boolean
+    Dim tieneHOM As Boolean
+
+    For fila = 1 To _
+        WorksheetFunction.Min( _
+            ultimaFila, _
+            50 _
+        )
+
+        tieneRFC = False
+        tieneCURP = False
+        tieneHOM = False
+
+        For columna = 1 To ultimaColumna
+
+            texto = _
+                NormalizarTexto( _
+                    CStr( _
+                        ws.Cells( _
+                            fila, _
+                            columna _
+                        ).Value _
+                    ) _
+                )
+
+            Select Case texto
+
+                Case "RFC", _
+                     "RFCFISCAL", _
+                     "REGISTROFEDERALDECONTRIBUYENTES"
+
+                    tieneRFC = True
+
+                Case "CURP"
+
+                    tieneCURP = True
+
+                Case "HOM", _
+                     "HOMOCLAVE"
+
+                    tieneHOM = True
+
+            End Select
+
+        Next columna
+
+        If tieneRFC Or tieneCURP Or tieneHOM Then
+
+            BuscarFilaEncabezados = fila
+
+            Exit Function
+
+        End If
+
+    Next fila
+
+    BuscarFilaEncabezados = 0
+
+End Function
+
+
+'========================================================
+' EQUIVALENCIAS
+'========================================================
+
+Private Function CrearEquivalencias() As Object
+
+    Dim d As Object
+
+    Set d = _
+        CreateObject("Scripting.Dictionary")
+
+    d.CompareMode = 1
+
+    d("RFC") = "RFC"
+    d("RFCFISCAL") = "RFC"
+    d("REGISTROFEDERALDECONTRIBUYENTES") = "RFC"
+
+    d("RFCCOMPLETO") = "RFC_COMPLETO"
+
+    d("HOM") = "HOM"
+    d("HOMOCLAVE") = "HOM"
+
+    d("PATERNO") = "PATERNO"
+    d("APELLIDOPATERNO") = "PATERNO"
+    d("APPATERNO") = "PATERNO"
+
+    d("MATERNO") = "MATERNO"
+    d("APELLIDOMATERNO") = "MATERNO"
+    d("APMATERNO") = "MATERNO"
+
+    d("NOMBRE") = "NOMBRE"
+    d("NOMBRES") = "NOMBRE"
+    d("NOMBRECOMPLETO") = "NOMBRE"
+
+    d("CURP") = "CURP"
+
+    d("NIVEL") = "NIVEL"
+
+    d("UR") = "UR"
+    d("UNIDAD") = "UR"
+    d("UNIDADRESPONSABLE") = "UR"
+
+    d("PORMEDIODE") = "POR_MEDIO_DE"
+    d("MEDIO") = "POR_MEDIO_DE"
+
+    d("SOLICITAPORCENTAJE") = _
+        "SOLICITA_PORCENTAJE"
+
+    d("PORCENTAJESOLICITADO") = _
+        "SOLICITA_PORCENTAJE"
+
+    d("PORCENTAJE") = "PORCENTAJE"
+
+    d("QNA") = "QNA"
+    d("QUINCENA") = "QNA"
+
+    d("ANO") = "AÑO"
+    d("ANIO") = "AÑO"
+
+    d("CB") = "C_B"
+
+    d("FECHASOLICITAAHORO") = _
+        "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO"
+
+    d("FECHADEINGRESO") = _
+        "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO"
+
+    d("FECHAAPLICARAHORRO") = _
+        "FECHA_APLICAR_AHORRO"
+
+    d("FECHAHOY") = "FECHA_HOY"
+
+    d("RESULTADOANALISIS") = _
+        "RESULTADO_ANALISIS"
+
+    d("RESULTADO") = _
+        "RESULTADO_ANALISIS"
+
+    d("QNAAPLICACION") = _
+        "QNA_APLICACION"
+
+    d("QUINCENAAPLICACION") = _
+        "QNA_APLICACION"
+
+    d("OBSERVACIONES") = _
+        "OBSERVACIONES"
+
+    d("REGIMENENSINAVIDISSSTE") = _
+        "REGIMEN_EN_SINAVID_ISSSTE"
+
+    d("REGIMENSINAVIDISSSTE") = _
+        "REGIMEN_EN_SINAVID_ISSSTE"
+
+    d("REGIMENSIRI") = _
+        "REGIMEN_EN_SIRI_ES_EL_QUE_MAS_IMPORTANCIA_TIENE_PARA_APLICARLO_A"
+
+    d("REGIMENENSIRI") = _
+        "REGIMEN_EN_SIRI_ES_EL_QUE_MAS_IMPORTANCIA_TIENE_PARA_APLICARLO_A"
+
+    d("DIAENQUESETRABAJALASOLICITUD") = _
+        "DIA_EN_QUE_SE_TRABAJA_LA_SOLICITUD"
+
+    d("SARH") = _
+        "SARH_APLICACIÓN_DE_AHORRO_SOLIDARIO"
+
+    d("SARHAPLICACIONDEAHORROSOLIDARIO") = _
+        "SARH_APLICACIÓN_DE_AHORRO_SOLIDARIO"
+
+    d("ACTIVOINACTIVO") = _
+        "ACTIVO_INACTIVO_EN_ISSSTE_PARA_DAR_ALTA_O_BAJA"
+
+    d("CURPSHISTORICAS") = _
+        "CURPS_HISTORICAS_POR_SI_NO_SE_PUEDE_ACCEDER_A_SINAVID_PUEDE_TENE"
+
+    d("SOLICITUDESPOROFICIO") = _
+        "SOLICITUDES_POR_OFICIO"
+
+    d("OFICIO") = _
+        "SOLICITUDES_POR_OFICIO"
+
+    d("OFICIOFOLIO") = _
+        "OFICIO_FOLIO"
+
+    d("FOLIO") = _
+        "OFICIO_FOLIO"
+
+    d("CORREOELECTRONICO") = _
+        "CORREO_ELECTRONICO"
+
+    d("CORREO") = _
+        "CORREO_ELECTRONICO"
+
+    d("EMAIL") = _
+        "CORREO_ELECTRONICO"
+
+    d("DESCARGOSAC") = _
+        "DESCARGO_SAC"
+
+    d("AREADIRECCION") = _
+        "AREA_DIRECCION"
+
+    d("AREA") = _
+        "AREA_DIRECCION"
+
+    d("DIRECCION") = _
+        "AREA_DIRECCION"
+
+    d("CONTEOOFICIOS") = _
+        "CONTEO_OFICIOS"
+
+    d("MESDECAPTURA") = _
+        "MES_DE_CAPTURA"
+
+    d("ALTABAJA") = _
+        "ALTA_BAJA"
+
+    d("REVISO") = "REVISO"
+
+    d("ESCANERSEPARADO") = _
+        "ESCANER_SEPARADO"
+
+    d("ESCANER") = _
+        "ESCANER_SEPARADO"
+
+    d("SCAN") = _
+        "ESCANER_SEPARADO"
+
+    d("SEXO") = "SEXO"
+
+    Set CrearEquivalencias = d
+
+End Function
+
+
+'========================================================
+' NORMALIZAR TEXTO
+'========================================================
+
+Private Function NormalizarTexto( _
+    ByVal texto As String) As String
+
+    texto = _
+        UCase(Trim(texto))
+
+    texto = _
+        Replace(texto, "Á", "A")
+
+    texto = _
+        Replace(texto, "É", "E")
+
+    texto = _
+        Replace(texto, "Í", "I")
+
+    texto = _
+        Replace(texto, "Ó", "O")
+
+    texto = _
+        Replace(texto, "Ú", "U")
+
+    texto = _
+        Replace(texto, "Ü", "U")
+
+    texto = _
+        Replace(texto, "Ñ", "N")
+
+    texto = _
+        Replace(texto, " ", "")
+
+    texto = _
+        Replace(texto, ".", "")
+
+    texto = _
+        Replace(texto, "-", "")
+
+    texto = _
+        Replace(texto, "_", "")
+
+    texto = _
+        Replace(texto, "/", "")
+
+    texto = _
+        Replace(texto, "\", "")
+
+    texto = _
+        Replace(texto, "(", "")
+
+    texto = _
+        Replace(texto, ")", "")
+
+    texto = _
+        Replace(texto, ":", "")
+
+    NormalizarTexto = texto
+
+End Function
+
+
+'========================================================
+' OBTENER FECHA EXTERNA
+'========================================================
+
+Private Function ObtenerFechaExterna( _
+    ByVal ws As Worksheet, _
+    ByVal fila As Long, _
+    ByVal encabezados As Object) As Variant
+
+    Dim i As Variant
+    Dim campo As String
+    Dim valor As Variant
+
+    For Each i In encabezados.Keys
+
+        campo = encabezados(i)
+
+        If campo = "FECHA_HOY" Or _
+           campo = "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO" Or _
+           campo = "FECHA_APLICAR_AHORRO" Then
+
+            valor = ws.Cells(fila, i).Value
+
+            If IsDate(valor) Then
+
+                ObtenerFechaExterna = CDate(valor)
+
+                Exit Function
+
+            End If
+
+        End If
+
+    Next i
+
+    ObtenerFechaExterna = Empty
+
+End Function
+
+
+'========================================================
+' COMPARAR FECHAS
+'========================================================
+
+Private Function EsFechaMasReciente( _
+    ByVal fechaNueva As Variant, _
+    ByVal fechaAnterior As Variant) As Boolean
+
+    If Not IsDate(fechaNueva) Then
+
+        EsFechaMasReciente = False
+
+        Exit Function
+
+    End If
+
+    If Not IsDate(fechaAnterior) Then
+
+        EsFechaMasReciente = True
+
+        Exit Function
+
+    End If
+
+    EsFechaMasReciente = _
+        CDate(fechaNueva) > CDate(fechaAnterior)
+
+End Function
+
+
+'========================================================
+' BUSCAR EN ACCESS
+'
+' Esta función utiliza la conexión que ya tenemos.
+'========================================================
+
+Private Function BuscarRegistroAccess( _
+    ByVal rfc As String, _
+    ByVal curp As String, _
+    ByVal rfcCompleto As String, _
+    ByRef fechaEncontrada As Variant) As Boolean
+
+    Dim cn As Object
+    Dim rs As Object
+
+    Dim sql As String
+    Dim condiciones As String
+
+    On Error GoTo ErrorHandler
+
+    Set cn = AbrirConexionAccess()
+
+    If cn Is Nothing Then Exit Function
+
+    condiciones = ""
+
+    If rfc <> "" Then
+
+        condiciones = _
+            "[RFC]='" & _
+            Replace(rfc, "'", "''") & _
+            "'"
+
+    ElseIf curp <> "" Then
+
+        condiciones = _
+            "[CURP]='" & _
+            Replace(curp, "'", "''") & _
+            "'"
+
+    ElseIf rfcCompleto <> "" Then
+
+        condiciones = _
+            "[RFC_COMPLETO]='" & _
+            Replace(rfcCompleto, "'", "''") & _
+            "'"
+
+    Else
+
+        GoTo Salir
+
+    End If
+
+    sql = _
+        "SELECT TOP 1 [FECHA_HOY], " & _
+        "[FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO], " & _
+        "[FECHA_APLICAR_AHORRO] " & _
+        "FROM [AHORRO_SOLIDARIO] " & _
+        "WHERE " & condiciones
+
+    Set rs = cn.Execute(sql)
+
+    If Not rs.EOF Then
+
+        BuscarRegistroAccess = True
+
+        If Not IsNull(rs.Fields("FECHA_HOY").Value) Then
+
+            fechaEncontrada = _
+                rs.Fields("FECHA_HOY").Value
+
+        ElseIf Not IsNull( _
+            rs.Fields( _
+                "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO" _
+            ).Value _
+        ) Then
+
+            fechaEncontrada = _
+                rs.Fields( _
+                    "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO" _
+                ).Value
+
+        ElseIf Not IsNull( _
+            rs.Fields("FECHA_APLICAR_AHORRO").Value _
+        ) Then
+
+            fechaEncontrada = _
+                rs.Fields("FECHA_APLICAR_AHORRO").Value
+
+        End If
+
+    End If
+
+Salir:
+
+    On Error Resume Next
+
+    rs.Close
+    cn.Close
+
+    Set rs = Nothing
+    Set cn = Nothing
+
+    Exit Function
+
+ErrorHandler:
+
+    BuscarRegistroAccess = False
+
+    Resume Salir
+
+End Function
+
+
+'========================================================
+' SIGUIENTE FILA LIBRE DE REGISTRAR
+'========================================================
+
+Private Function SiguienteFilaRegistrar( _
+    ByVal ws As Worksheet) As Long
+
+    Dim fila As Long
+
+    fila = 9
+
+    Do While _
+        Trim(CStr(ws.Cells(fila, 1).Value)) <> ""
+
+        fila = fila + 1
+
+        If fila > 5000 Then
+
+            MsgBox _
+                "NO HAY MÁS FILAS DISPONIBLES EN REGISTRAR.", _
+                vbCritical, _
+                "REGISTRAR"
+
+            SiguienteFilaRegistrar = 0
+
+            Exit Function
+
+        End If
+
+    Loop
+
+    SiguienteFilaRegistrar = fila
+
+End Function
+
+
+'========================================================
+' COPIAR REGISTRO A REGISTRAR
+'========================================================
+
+Private Sub CopiarRegistroARegistrar( _
+    ByVal wsOrigen As Worksheet, _
+    ByVal wsDestino As Worksheet, _
+    ByVal filaOrigen As Long, _
+    ByVal filaDestino As Long, _
+    ByVal encabezados As Object)
+
+    Dim i As Variant
+    Dim campo As String
+    Dim valor As Variant
+    Dim columnaDestino As Long
+
+    For Each i In encabezados.Keys
+
+        campo = encabezados(i)
+
+        If campo <> "RFC_COMPLETO" Then
+
+            columnaDestino = _
+                ColumnaPorEncabezado( _
+                    wsDestino, _
+                    campo _
+                )
+
+            If columnaDestino > 0 Then
+
+                valor = _
+                    wsOrigen.Cells( _
+                        filaOrigen, _
+                        i _
+                    ).Value
+
+                If Not IsError(valor) Then
+
+                    wsDestino.Cells( _
+                        filaDestino, _
+                        columnaDestino _
+                    ).Value = valor
+
+                End If
+
+            End If
+
+        End If
+
+    Next i
+
+    '--------------------------------------------
+    ' RFC_COMPLETO queda con su fórmula.
+    '--------------------------------------------
+
+    wsDestino.Cells( _
+        filaDestino, _
+        2 _
+    ).Formula = _
+        "=IF(OR(A" & filaDestino & _
+        "="""",C" & filaDestino & _
+        "=""""),"""",A" & filaDestino & _
+        "&C" & filaDestino & ")"
+
+    '--------------------------------------------
+    ' FECHAS AUTOMÁTICAS
+    '--------------------------------------------
+
+    wsDestino.Cells( _
+        filaDestino, _
+        17 _
+    ).Formula = _
+        "=IF(P" & filaDestino & _
+        "="""","""",P" & filaDestino & "+90)"
+
+    wsDestino.Cells( _
+        filaDestino, _
+        18 _
+    ).Formula = "=TODAY()"
+
+    wsDestino.Cells( _
+        filaDestino, _
+        13 _
+    ).NumberFormat = "00"
+
+End Sub
+
+
+'========================================================
+' ENCONTRAR COLUMNA POR ENCABEZADO
+'========================================================
+
+Private Function ColumnaPorEncabezado( _
+    ByVal ws As Worksheet, _
+    ByVal nombreBuscado As String) As Long
+
+    Dim c As Long
+    Dim encabezado As String
+
+    For c = 1 To 38
+
+        encabezado = _
+            NormalizarTexto( _
+                CStr(ws.Cells(8, c).Value) _
+            )
+
+        If encabezado = _
+            NormalizarTexto(nombreBuscado) Then
+
+            ColumnaPorEncabezado = c
+
+            Exit Function
+
+        End If
+
+    Next c
+
+    ColumnaPorEncabezado = 0
+
+End Function
