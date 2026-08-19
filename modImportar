@@ -1,18 +1,33 @@
 Option Explicit
 
 '========================================================
-' IMPORTAR ARCHIVO EXTERNO
+' MODIMPORTAR
 '
-' Primera versión:
-' - Excel XLSX/XLS
-' - Busca encabezados aunque no estén en la fila 1
-' - Compara contra Access
-' - Si no existe o es más reciente:
-'       lo carga en REGISTRAR
-' - NO modifica Access
+' ARCHIVO EXTERNO
+'     ↓
+' EXCEL
+'     ↓
+' BUSCAR ENCABEZADOS EN CUALQUIER FILA
+'     ↓
+' EQUIVALENCIAS
+'     ↓
+' COMPARAR CON ACCESS
+'     ↓
+' NUEVO O MÁS RECIENTE
+'     ↓
+' REGISTRAR
 '
-' PDF:
-' se deja reservado para la segunda etapa.
+' IMPORTANTE:
+' - NO MODIFICA ACCESS
+' - CARGA EN REGISTRAR PARA REVISIÓN MANUAL
+' - NO DEPENDE DE LA CELDA SELECCIONADA
+' - LA FECHA OFICIAL DE COMPARACIÓN ES:
+'   FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO
+'========================================================
+
+
+'========================================================
+' 1. BOTÓN CREAR / IMPORTAR
 '========================================================
 
 Public Sub ImportarArchivoExterno()
@@ -33,19 +48,23 @@ Public Sub ImportarArchivoExterno()
 
         .Filters.Clear
 
-        .Filters.Add "Archivos de Excel", "*.xlsx;*.xls;*.xlsm"
+        .Filters.Add _
+            "Archivos de Excel", _
+            "*.xlsx;*.xls;*.xlsm"
 
-        .Filters.Add "Archivos PDF", "*.pdf"
+        .Filters.Add _
+            "Archivos PDF", _
+            "*.pdf"
 
-        If .Show <> -1 Then
-            Exit Sub
-        End If
+        If .Show <> -1 Then Exit Sub
 
         archivo = .SelectedItems(1)
 
     End With
 
-    extension = LCase$(Mid$(archivo, InStrRev(archivo, ".") + 1))
+    extension = LCase$( _
+        Mid$(archivo, InStrRev(archivo, ".") + 1) _
+    )
 
     Select Case extension
 
@@ -56,9 +75,8 @@ Public Sub ImportarArchivoExterno()
         Case "pdf"
 
             MsgBox _
-                "EL ARCHIVO PDF FUE SELECCIONADO CORRECTAMENTE." & _
-                vbCrLf & vbCrLf & _
-                "LA LECTURA AUTOMÁTICA DE PDF SE IMPLEMENTARÁ " & _
+                "EL PDF FUE SELECCIONADO CORRECTAMENTE." & vbCrLf & vbCrLf & _
+                "LA EXTRACCIÓN AUTOMÁTICA DE PDF/OCR SE IMPLEMENTARÁ " & _
                 "EN LA SIGUIENTE ETAPA.", _
                 vbInformation, _
                 "IMPORTAR PDF"
@@ -77,10 +95,8 @@ Public Sub ImportarArchivoExterno()
 ErrorHandler:
 
     MsgBox _
-        "NO SE PUDO SELECCIONAR EL ARCHIVO." & _
-        vbCrLf & vbCrLf & _
-        "ERROR " & Err.Number & ":" & _
-        vbCrLf & _
+        "NO SE PUDO SELECCIONAR EL ARCHIVO." & vbCrLf & vbCrLf & _
+        "ERROR " & Err.Number & ":" & vbCrLf & _
         Err.Description, _
         vbCritical, _
         "ERROR"
@@ -89,7 +105,7 @@ End Sub
 
 
 '========================================================
-' IMPORTAR EXCEL
+' 2. IMPORTAR EXCEL
 '========================================================
 
 Private Sub ImportarExcel(ByVal rutaArchivo As String)
@@ -103,6 +119,7 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
 
     Dim filaEncabezados As Long
     Dim fila As Long
+    Dim filaDestino As Long
 
     Dim encabezados As Object
     Dim equivalencias As Object
@@ -111,15 +128,17 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
     Dim encabezado As String
     Dim campoDestino As String
 
-    Dim filaDestino As Long
-
     Dim rfc As String
     Dim curp As String
     Dim rfcCompleto As String
 
     Dim encontradoAccess As Boolean
+
     Dim fechaExterna As Variant
     Dim fechaAccess As Variant
+
+    Dim registrosCargados As Long
+    Dim registrosIgnorados As Long
 
     On Error GoTo ErrorHandler
 
@@ -133,45 +152,35 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
     ' ABRIR ARCHIVO EXTERNO
     '====================================================
 
-    Set wbOrigen = _
-        Workbooks.Open( _
-            Filename:=rutaArchivo, _
-            ReadOnly:=True _
-        )
-
-    '====================================================
-    ' TOMAR LA PRIMERA HOJA
-    '====================================================
+    Set wbOrigen = Workbooks.Open( _
+        Filename:=rutaArchivo, _
+        ReadOnly:=True _
+    )
 
     Set wsOrigen = wbOrigen.Worksheets(1)
 
     '====================================================
-    ' ENCONTRAR ÚLTIMA FILA / COLUMNA
+    ' DETERMINAR DIMENSIONES
     '====================================================
 
-    ultimaFila = _
-        wsOrigen.Cells( _
-            wsOrigen.Rows.Count, _
-            1 _
-        ).End(xlUp).Row
+    ultimaFila = wsOrigen.Cells( _
+        wsOrigen.Rows.Count, 1 _
+    ).End(xlUp).Row
 
-    ultimaColumna = _
-        wsOrigen.Cells( _
-            1, _
-            wsOrigen.Columns.Count _
-        ).End(xlToLeft).Column
-
+    ultimaColumna = wsOrigen.Cells( _
+        1, _
+        wsOrigen.Columns.Count _
+    ).End(xlToLeft).Column
 
     '====================================================
     ' BUSCAR FILA DE ENCABEZADOS
     '====================================================
 
-    filaEncabezados = _
-        BuscarFilaEncabezados( _
-            wsOrigen, _
-            ultimaFila, _
-            ultimaColumna _
-        )
+    filaEncabezados = BuscarFilaEncabezados( _
+        wsOrigen, _
+        ultimaFila, _
+        ultimaColumna _
+    )
 
     If filaEncabezados = 0 Then
 
@@ -184,9 +193,8 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
 
     End If
 
-
     '====================================================
-    ' CREAR EQUIVALENCIAS
+    ' EQUIVALENCIAS
     '====================================================
 
     Set equivalencias = CrearEquivalencias()
@@ -196,29 +204,23 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
 
     encabezados.CompareMode = 1
 
-
     '====================================================
-    ' LEER ENCABEZADOS
+    ' LEER ENCABEZADOS EXTERNOS
     '====================================================
 
     For i = 1 To ultimaColumna
 
-        encabezado = _
-            NormalizarTexto( _
-                CStr( _
-                    wsOrigen.Cells( _
-                        filaEncabezados, _
-                        i _
-                    ).Value _
-                ) _
-            )
+        encabezado = NormalizarTexto( _
+            CStr(wsOrigen.Cells( _
+                filaEncabezados, i _
+            ).Value) _
+        )
 
         If encabezado <> "" Then
 
             If equivalencias.Exists(encabezado) Then
 
-                encabezados.Add _
-                    i, _
+                encabezados(i) = _
                     equivalencias(encabezado)
 
             End If
@@ -227,11 +229,11 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
 
     Next i
 
-
     If encabezados.Count = 0 Then
 
         MsgBox _
-            "NO SE ENCONTRARON ENCABEZADOS COMPATIBLES.", _
+            "NO SE ENCONTRARON ENCABEZADOS COMPATIBLES " & _
+            "CON REGISTRAR.", _
             vbExclamation, _
             "IMPORTAR"
 
@@ -239,6 +241,18 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
 
     End If
 
+    '====================================================
+    ' PRIMERA FILA LIBRE
+    '
+    ' NO IMPORTA QUÉ CELDA ESTÉ SELECCIONADA
+    '====================================================
+
+    filaDestino = SiguienteFilaRegistrar(wsDestino)
+
+    If filaDestino = 0 Then GoTo Salir
+
+    registrosCargados = 0
+    registrosIgnorados = 0
 
     '====================================================
     ' RECORRER TODOS LOS REGISTROS
@@ -250,54 +264,35 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
         curp = ""
         rfcCompleto = ""
 
-        '--------------------------------------------
-        ' OBTENER IDENTIFICADORES
-        '--------------------------------------------
+        '================================================
+        ' IDENTIFICADORES
+        '================================================
 
         For i = 1 To ultimaColumna
 
             If encabezados.Exists(i) Then
 
-                campoDestino = _
-                    encabezados(i)
+                campoDestino = encabezados(i)
 
                 Select Case campoDestino
 
                     Case "RFC"
 
-                        rfc = Trim( _
-                            UCase( _
-                                CStr( _
-                                    wsOrigen.Cells( _
-                                        fila, i _
-                                    ).Value _
-                                ) _
-                            ) _
-                        )
+                        rfc = Trim(UCase(CStr( _
+                            wsOrigen.Cells(fila, i).Value _
+                        )))
 
                     Case "RFC_COMPLETO"
 
-                        rfcCompleto = Trim( _
-                            UCase( _
-                                CStr( _
-                                    wsOrigen.Cells( _
-                                        fila, i _
-                                    ).Value _
-                                ) _
-                            ) _
-                        )
+                        rfcCompleto = Trim(UCase(CStr( _
+                            wsOrigen.Cells(fila, i).Value _
+                        )))
 
                     Case "CURP"
 
-                        curp = Trim( _
-                            UCase( _
-                                CStr( _
-                                    wsOrigen.Cells( _
-                                        fila, i _
-                                    ).Value _
-                                ) _
-                            ) _
-                        )
+                        curp = Trim(UCase(CStr( _
+                            wsOrigen.Cells(fila, i).Value _
+                        )))
 
                 End Select
 
@@ -305,88 +300,95 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
 
         Next i
 
-
-        '--------------------------------------------
-        ' IGNORAR FILA VACÍA
-        '--------------------------------------------
+        '================================================
+        ' FILA VACÍA
+        '================================================
 
         If rfc = "" And _
-           rfcCompleto = "" And _
-           curp = "" Then
+           curp = "" And _
+           rfcCompleto = "" Then
 
-            GoTo SiguienteFila
+            registrosIgnorados = _
+                registrosIgnorados + 1
+
+            GoTo SiguienteRegistro
 
         End If
 
+        '================================================
+        ' FECHA OFICIAL DEL ARCHIVO EXTERNO
+        '
+        ' ÚNICAMENTE:
+        ' FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO
+        '================================================
+
+        fechaExterna = ObtenerFechaExterna( _
+            wsOrigen, _
+            fila, _
+            encabezados _
+        )
 
         '================================================
-        ' FECHA DEL ARCHIVO EXTERNO
-        '================================================
-
-        fechaExterna = _
-            ObtenerFechaExterna( _
-                wsOrigen, _
-                fila, _
-                encabezados _
-            )
-
-
-        '================================================
-        ' COMPARAR CONTRA ACCESS
+        ' BUSCAR EN ACCESS
         '================================================
 
         encontradoAccess = False
-
         fechaAccess = Empty
+
+        '------------------------------------------------
+        ' RFC
+        '------------------------------------------------
 
         If rfc <> "" Then
 
-            encontradoAccess = _
-                BuscarRegistroAccess( _
-                    rfc, _
-                    "", _
-                    "", _
-                    fechaAccess _
-                )
+            encontradoAccess = BuscarRegistroAccess( _
+                rfc, _
+                "", _
+                "", _
+                fechaAccess _
+            )
 
         End If
 
-        If Not encontradoAccess And _
-           curp <> "" Then
+        '------------------------------------------------
+        ' CURP
+        '------------------------------------------------
 
-            encontradoAccess = _
-                BuscarRegistroAccess( _
-                    "", _
-                    curp, _
-                    "", _
-                    fechaAccess _
-                )
+        If Not encontradoAccess And curp <> "" Then
 
-        End If
-
-        If Not encontradoAccess And _
-           rfcCompleto <> "" Then
-
-            encontradoAccess = _
-                BuscarRegistroAccess( _
-                    "", _
-                    "", _
-                    rfcCompleto, _
-                    fechaAccess _
-                )
+            encontradoAccess = BuscarRegistroAccess( _
+                "", _
+                curp, _
+                "", _
+                fechaAccess _
+            )
 
         End If
 
+        '------------------------------------------------
+        ' RFC COMPLETO
+        '------------------------------------------------
+
+        If Not encontradoAccess And rfcCompleto <> "" Then
+
+            encontradoAccess = BuscarRegistroAccess( _
+                "", _
+                "", _
+                rfcCompleto, _
+                fechaAccess _
+            )
+
+        End If
 
         '================================================
-        ' DECIDIR SI SE CARGA EN REGISTRAR
+        ' DECISIÓN
         '================================================
 
         If Not encontradoAccess Then
 
-            'Nuevo registro
-            filaDestino = _
-                SiguienteFilaRegistrar(wsDestino)
+            '--------------------------------------------
+            ' NO EXISTE EN ACCESS
+            '--------------------------------------------
 
             CopiarRegistroARegistrar _
                 wsOrigen, _
@@ -395,19 +397,22 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
                 filaDestino, _
                 encabezados
 
+            registrosCargados = _
+                registrosCargados + 1
+
+            filaDestino = filaDestino + 1
+
         Else
 
             '--------------------------------------------
-            ' EXISTE
+            ' EXISTE:
+            ' COMPARAR FECHA DE SOLICITUD/INGRESO
             '--------------------------------------------
 
             If EsFechaMasReciente( _
                 fechaExterna, _
                 fechaAccess _
             ) Then
-
-                filaDestino = _
-                    SiguienteFilaRegistrar(wsDestino)
 
                 CopiarRegistroARegistrar _
                     wsOrigen, _
@@ -416,21 +421,33 @@ Private Sub ImportarExcel(ByVal rutaArchivo As String)
                     filaDestino, _
                     encabezados
 
+                registrosCargados = _
+                    registrosCargados + 1
+
+                filaDestino = filaDestino + 1
+
+            Else
+
+                registrosIgnorados = _
+                    registrosIgnorados + 1
+
             End If
 
         End If
 
-
-SiguienteFila:
+SiguienteRegistro:
 
     Next fila
 
+    '====================================================
+    ' RESULTADO
+    '====================================================
 
     MsgBox _
-        "IMPORTACIÓN TERMINADA." & _
-        vbCrLf & vbCrLf & _
-        "LOS REGISTROS NUEVOS O MÁS RECIENTES " & _
-        "FUERON CARGADOS EN REGISTRAR PARA REVISIÓN.", _
+        "IMPORTACIÓN TERMINADA." & vbCrLf & vbCrLf & _
+        "REGISTROS CARGADOS: " & registrosCargados & vbCrLf & _
+        "REGISTROS NO CARGADOS: " & registrosIgnorados & vbCrLf & vbCrLf & _
+        "LOS DATOS QUEDARON EN REGISTRAR PARA REVISIÓN MANUAL.", _
         vbInformation, _
         "IMPORTAR"
 
@@ -449,14 +466,11 @@ Salir:
 
     Exit Sub
 
-
 ErrorHandler:
 
     MsgBox _
-        "ERROR DURANTE LA IMPORTACIÓN." & _
-        vbCrLf & vbCrLf & _
-        "ERROR " & Err.Number & ":" & _
-        vbCrLf & _
+        "ERROR DURANTE LA IMPORTACIÓN." & vbCrLf & vbCrLf & _
+        "ERROR " & Err.Number & ":" & vbCrLf & _
         Err.Description, _
         vbCritical, _
         "ERROR DE IMPORTACIÓN"
@@ -467,14 +481,13 @@ End Sub
 
 
 '========================================================
-' BUSCAR FILA DE ENCABEZADOS
+' 3. BUSCAR FILA DE ENCABEZADOS
 '========================================================
 
 Private Function BuscarFilaEncabezados( _
     ByVal ws As Worksheet, _
     ByVal ultimaFila As Long, _
-    ByVal ultimaColumna As Long _
-) As Long
+    ByVal ultimaColumna As Long) As Long
 
     Dim fila As Long
     Dim columna As Long
@@ -485,11 +498,7 @@ Private Function BuscarFilaEncabezados( _
     Dim tieneCURP As Boolean
     Dim tieneHOM As Boolean
 
-    For fila = 1 To _
-        WorksheetFunction.Min( _
-            ultimaFila, _
-            50 _
-        )
+    For fila = 1 To WorksheetFunction.Min(ultimaFila, 100)
 
         tieneRFC = False
         tieneCURP = False
@@ -497,15 +506,9 @@ Private Function BuscarFilaEncabezados( _
 
         For columna = 1 To ultimaColumna
 
-            texto = _
-                NormalizarTexto( _
-                    CStr( _
-                        ws.Cells( _
-                            fila, _
-                            columna _
-                        ).Value _
-                    ) _
-                )
+            texto = NormalizarTexto( _
+                CStr(ws.Cells(fila, columna).Value) _
+            )
 
             Select Case texto
 
@@ -531,7 +534,6 @@ Private Function BuscarFilaEncabezados( _
         If tieneRFC Or tieneCURP Or tieneHOM Then
 
             BuscarFilaEncabezados = fila
-
             Exit Function
 
         End If
@@ -544,17 +546,20 @@ End Function
 
 
 '========================================================
-' EQUIVALENCIAS
+' 4. EQUIVALENCIAS
 '========================================================
 
 Private Function CrearEquivalencias() As Object
 
     Dim d As Object
 
-    Set d = _
-        CreateObject("Scripting.Dictionary")
+    Set d = CreateObject("Scripting.Dictionary")
 
     d.CompareMode = 1
+
+    '--------------------------------------------
+    ' IDENTIFICACIÓN
+    '--------------------------------------------
 
     d("RFC") = "RFC"
     d("RFCFISCAL") = "RFC"
@@ -585,6 +590,10 @@ Private Function CrearEquivalencias() As Object
     d("UNIDAD") = "UR"
     d("UNIDADRESPONSABLE") = "UR"
 
+    '--------------------------------------------
+    ' AHORRO
+    '--------------------------------------------
+
     d("PORMEDIODE") = "POR_MEDIO_DE"
     d("MEDIO") = "POR_MEDIO_DE"
 
@@ -598,16 +607,25 @@ Private Function CrearEquivalencias() As Object
 
     d("QNA") = "QNA"
     d("QUINCENA") = "QNA"
+    d("QUINCENADEAPLICACION") = "QNA"
 
     d("ANO") = "AÑO"
     d("ANIO") = "AÑO"
+    d("YEAR") = "AÑO"
 
     d("CB") = "C_B"
+
+    '--------------------------------------------
+    ' FECHAS
+    '--------------------------------------------
 
     d("FECHASOLICITAAHORO") = _
         "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO"
 
     d("FECHADEINGRESO") = _
+        "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO"
+
+    d("FECHASOLICITAAHOROO CUANDOINGRESO") = _
         "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO"
 
     d("FECHAAPLICARAHORRO") = _
@@ -630,6 +648,10 @@ Private Function CrearEquivalencias() As Object
     d("OBSERVACIONES") = _
         "OBSERVACIONES"
 
+    '--------------------------------------------
+    ' RÉGIMEN
+    '--------------------------------------------
+
     d("REGIMENENSINAVIDISSSTE") = _
         "REGIMEN_EN_SINAVID_ISSSTE"
 
@@ -642,6 +664,10 @@ Private Function CrearEquivalencias() As Object
     d("REGIMENENSIRI") = _
         "REGIMEN_EN_SIRI_ES_EL_QUE_MAS_IMPORTANCIA_TIENE_PARA_APLICARLO_A"
 
+    '--------------------------------------------
+    ' OTROS
+    '--------------------------------------------
+
     d("DIAENQUESETRABAJALASOLICITUD") = _
         "DIA_EN_QUE_SE_TRABAJA_LA_SOLICITUD"
 
@@ -652,6 +678,9 @@ Private Function CrearEquivalencias() As Object
         "SARH_APLICACIÓN_DE_AHORRO_SOLIDARIO"
 
     d("ACTIVOINACTIVO") = _
+        "ACTIVO_INACTIVO_EN_ISSSTE_PARA_DAR_ALTA_O_BAJA"
+
+    d("ACTIVOINACTIVOENISSSTE") = _
         "ACTIVO_INACTIVO_EN_ISSSTE_PARA_DAR_ALTA_O_BAJA"
 
     d("CURPSHISTORICAS") = _
@@ -718,62 +747,32 @@ End Function
 
 
 '========================================================
-' NORMALIZAR TEXTO
+' 5. NORMALIZAR TEXTO
 '========================================================
 
 Private Function NormalizarTexto( _
     ByVal texto As String) As String
 
-    texto = _
-        UCase(Trim(texto))
+    texto = UCase(Trim(texto))
 
-    texto = _
-        Replace(texto, "Á", "A")
+    texto = Replace(texto, "Á", "A")
+    texto = Replace(texto, "É", "E")
+    texto = Replace(texto, "Í", "I")
+    texto = Replace(texto, "Ó", "O")
+    texto = Replace(texto, "Ú", "U")
+    texto = Replace(texto, "Ü", "U")
+    texto = Replace(texto, "Ñ", "N")
 
-    texto = _
-        Replace(texto, "É", "E")
-
-    texto = _
-        Replace(texto, "Í", "I")
-
-    texto = _
-        Replace(texto, "Ó", "O")
-
-    texto = _
-        Replace(texto, "Ú", "U")
-
-    texto = _
-        Replace(texto, "Ü", "U")
-
-    texto = _
-        Replace(texto, "Ñ", "N")
-
-    texto = _
-        Replace(texto, " ", "")
-
-    texto = _
-        Replace(texto, ".", "")
-
-    texto = _
-        Replace(texto, "-", "")
-
-    texto = _
-        Replace(texto, "_", "")
-
-    texto = _
-        Replace(texto, "/", "")
-
-    texto = _
-        Replace(texto, "\", "")
-
-    texto = _
-        Replace(texto, "(", "")
-
-    texto = _
-        Replace(texto, ")", "")
-
-    texto = _
-        Replace(texto, ":", "")
+    texto = Replace(texto, " ", "")
+    texto = Replace(texto, ".", "")
+    texto = Replace(texto, "-", "")
+    texto = Replace(texto, "_", "")
+    texto = Replace(texto, "/", "")
+    texto = Replace(texto, "\", "")
+    texto = Replace(texto, "(", "")
+    texto = Replace(texto, ")", "")
+    texto = Replace(texto, ":", "")
+    texto = Replace(texto, "'", "")
 
     NormalizarTexto = texto
 
@@ -781,7 +780,11 @@ End Function
 
 
 '========================================================
-' OBTENER FECHA EXTERNA
+' 6. FECHA OFICIAL DEL EXCEL EXTERNO
+'
+' SOLO SE UTILIZA:
+'
+' FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO
 '========================================================
 
 Private Function ObtenerFechaExterna( _
@@ -797,9 +800,8 @@ Private Function ObtenerFechaExterna( _
 
         campo = encabezados(i)
 
-        If campo = "FECHA_HOY" Or _
-           campo = "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO" Or _
-           campo = "FECHA_APLICAR_AHORRO" Then
+        If campo = _
+            "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO" Then
 
             valor = ws.Cells(fila, i).Value
 
@@ -821,25 +823,29 @@ End Function
 
 
 '========================================================
-' COMPARAR FECHAS
+' 7. COMPARAR FECHAS
 '========================================================
 
 Private Function EsFechaMasReciente( _
     ByVal fechaNueva As Variant, _
     ByVal fechaAnterior As Variant) As Boolean
 
+    'Si el archivo externo no trae fecha,
+    'NO se considera más reciente.
+
     If Not IsDate(fechaNueva) Then
 
         EsFechaMasReciente = False
-
         Exit Function
 
     End If
 
+    'Si Access no tiene fecha registrada,
+    'el registro externo se considera más reciente.
+
     If Not IsDate(fechaAnterior) Then
 
         EsFechaMasReciente = True
-
         Exit Function
 
     End If
@@ -851,9 +857,10 @@ End Function
 
 
 '========================================================
-' BUSCAR EN ACCESS
+' 8. BUSCAR EN ACCESS
 '
-' Esta función utiliza la conexión que ya tenemos.
+' LA FECHA COMPARADA ES ÚNICAMENTE:
+' FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO
 '========================================================
 
 Private Function BuscarRegistroAccess( _
@@ -904,9 +911,8 @@ Private Function BuscarRegistroAccess( _
     End If
 
     sql = _
-        "SELECT TOP 1 [FECHA_HOY], " & _
-        "[FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO], " & _
-        "[FECHA_APLICAR_AHORRO] " & _
+        "SELECT TOP 1 " & _
+        "[FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO] " & _
         "FROM [AHORRO_SOLIDARIO] " & _
         "WHERE " & condiciones
 
@@ -916,12 +922,7 @@ Private Function BuscarRegistroAccess( _
 
         BuscarRegistroAccess = True
 
-        If Not IsNull(rs.Fields("FECHA_HOY").Value) Then
-
-            fechaEncontrada = _
-                rs.Fields("FECHA_HOY").Value
-
-        ElseIf Not IsNull( _
+        If Not IsNull( _
             rs.Fields( _
                 "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO" _
             ).Value _
@@ -932,13 +933,6 @@ Private Function BuscarRegistroAccess( _
                     "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO" _
                 ).Value
 
-        ElseIf Not IsNull( _
-            rs.Fields("FECHA_APLICAR_AHORRO").Value _
-        ) Then
-
-            fechaEncontrada = _
-                rs.Fields("FECHA_APLICAR_AHORRO").Value
-
         End If
 
     End If
@@ -947,8 +941,13 @@ Salir:
 
     On Error Resume Next
 
-    rs.Close
-    cn.Close
+    If Not rs Is Nothing Then
+        rs.Close
+    End If
+
+    If Not cn Is Nothing Then
+        cn.Close
+    End If
 
     Set rs = Nothing
     Set cn = Nothing
@@ -965,7 +964,9 @@ End Function
 
 
 '========================================================
-' SIGUIENTE FILA LIBRE DE REGISTRAR
+' 9. PRIMERA FILA DISPONIBLE EN REGISTRAR
+'
+' NO USA ActiveCell
 '========================================================
 
 Private Function SiguienteFilaRegistrar( _
@@ -1001,7 +1002,7 @@ End Function
 
 
 '========================================================
-' COPIAR REGISTRO A REGISTRAR
+' 10. COPIAR REGISTRO A REGISTRAR
 '========================================================
 
 Private Sub CopiarRegistroARegistrar( _
@@ -1020,6 +1021,7 @@ Private Sub CopiarRegistroARegistrar( _
 
         campo = encabezados(i)
 
+        'RFC_COMPLETO se calcula con su propia fórmula
         If campo <> "RFC_COMPLETO" Then
 
             columnaDestino = _
@@ -1051,9 +1053,9 @@ Private Sub CopiarRegistroARegistrar( _
 
     Next i
 
-    '--------------------------------------------
-    ' RFC_COMPLETO queda con su fórmula.
-    '--------------------------------------------
+    '====================================================
+    ' RFC_COMPLETO
+    '====================================================
 
     wsDestino.Cells( _
         filaDestino, _
@@ -1064,21 +1066,40 @@ Private Sub CopiarRegistroARegistrar( _
         "=""""),"""",A" & filaDestino & _
         "&C" & filaDestino & ")"
 
-    '--------------------------------------------
-    ' FECHAS AUTOMÁTICAS
-    '--------------------------------------------
+    '====================================================
+    ' FECHA_APLICAR_AHORRO
+    '====================================================
 
     wsDestino.Cells( _
         filaDestino, _
         17 _
     ).Formula = _
         "=IF(P" & filaDestino & _
-        "="""","""",P" & filaDestino & "+90)"
+        "="""","""",P" & filaDestino & _
+        "+90)"
+
+    wsDestino.Cells( _
+        filaDestino, _
+        17 _
+    ).NumberFormat = "dd/mm/yyyy"
+
+    '====================================================
+    ' FECHA_HOY
+    '====================================================
 
     wsDestino.Cells( _
         filaDestino, _
         18 _
     ).Formula = "=TODAY()"
+
+    wsDestino.Cells( _
+        filaDestino, _
+        18 _
+    ).NumberFormat = "dd/mm/yyyy"
+
+    '====================================================
+    ' QNA
+    '====================================================
 
     wsDestino.Cells( _
         filaDestino, _
@@ -1089,7 +1110,7 @@ End Sub
 
 
 '========================================================
-' ENCONTRAR COLUMNA POR ENCABEZADO
+' 11. BUSCAR COLUMNA POR ENCABEZADO
 '========================================================
 
 Private Function ColumnaPorEncabezado( _
