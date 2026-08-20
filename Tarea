@@ -6,3 +6,6 @@
 
 * Volter la base, ya que el ultimo registro es el primero y el que sale al inicio es el ultimo registro, agregarles id para que quede funcional
 
+* El excel se queda pensando con el nuevo codigo, corregirlo y que ya sea funcional para mañana el codigo ya de importar y lo de modificar,
+  que todo se haga bien, ya para mañana presentar algo funcional mañana y que se pueda hacer, la tabla movimientos no existe en access, solo es una tabla universal llamada,
+  AHORRO_SOLIDARIO
