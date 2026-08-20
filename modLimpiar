@@ -1,0 +1,170 @@
+Option Explicit
+
+Public Sub LimpiarRegistrosRegistrar()
+
+    Dim ws As Worksheet
+    Dim ultimaCelda As Range
+    Dim ultimaFila As Long
+    Dim respuesta As VbMsgBoxResult
+
+    On Error GoTo ErrorHandler
+
+    Set ws = ThisWorkbook.Worksheets("REGISTRAR")
+
+    '====================================================
+    ' CONFIRMAR LIMPIEZA
+    '====================================================
+
+    respuesta = MsgBox( _
+        "¿ESTÁS SEGURO DE QUE QUIERES LIMPIAR LOS DATOS?" & _
+        vbCrLf & vbCrLf & _
+        "Se eliminarán todos los datos capturados o importados " & _
+        "desde la fila 9." & _
+        vbCrLf & vbCrLf & _
+        "NO se eliminarán los encabezados, desplegables ni " & _
+        "la estructura de REGISTRAR.", _
+        vbYesNo + vbQuestion + vbDefaultButton2, _
+        "LIMPIAR REGISTROS")
+
+    If respuesta <> vbYes Then Exit Sub
+
+
+    '====================================================
+    ' DESACTIVAR ACTUALIZACIÓN Y EVENTOS
+    '====================================================
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+
+    '====================================================
+    ' BUSCAR LA ÚLTIMA FILA UTILIZADA
+    '
+    ' Se revisa toda la hoja para no depender
+    ' únicamente de la columna A.
+    '====================================================
+
+    Set ultimaCelda = ws.Cells.Find( _
+        What:="*", _
+        After:=ws.Range("A1"), _
+        LookIn:=xlFormulas, _
+        LookAt:=xlPart, _
+        SearchOrder:=xlByRows, _
+        SearchDirection:=xlPrevious, _
+        MatchCase:=False)
+
+
+    '====================================================
+    ' SI NO HAY NADA DESDE LA FILA 9
+    '====================================================
+
+    If ultimaCelda Is Nothing Then
+
+        GoTo RestaurarFilaBase
+
+    End If
+
+
+    ultimaFila = ultimaCelda.Row
+
+
+    If ultimaFila >= 9 Then
+
+        '================================================
+        ' LIMPIAR TODAS LAS COLUMNAS DE LOS REGISTROS
+        '
+        ' A:AL = 38 columnas
+        '================================================
+
+        ws.Range( _
+            ws.Cells(9, 1), _
+            ws.Cells(ultimaFila, 38) _
+        ).ClearContents
+
+    End If
+
+
+RestaurarFilaBase:
+
+    '====================================================
+    ' RESTAURAR LAS FÓRMULAS QUE DEBE TENER REGISTRAR
+    '
+    ' RFC_COMPLETO
+    '====================================================
+
+    ws.Cells(9, 2).Formula = _
+        "=IF(OR(A9="""",C9=""""),"""",A9&C9)"
+
+
+    '====================================================
+    ' FECHA_APLICAR_AHORRO
+    '====================================================
+
+    ws.Cells(9, 17).Formula = _
+        "=IF(P9="""","""",P9+90)"
+
+
+    '====================================================
+    ' FECHA_HOY
+    '====================================================
+
+    ws.Cells(9, 18).Formula = "=TODAY()"
+
+
+    '====================================================
+    ' FORMATO QNA
+    '====================================================
+
+    ws.Cells(9, 13).NumberFormat = "00"
+
+
+    '====================================================
+    ' FORMATO DE FECHAS
+    '====================================================
+
+    ws.Cells(9, 17).NumberFormat = "dd/mm/yyyy"
+
+    ws.Cells(9, 18).NumberFormat = "dd/mm/yyyy"
+
+
+    '====================================================
+    ' RESTAURAR EVENTOS
+    '====================================================
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+
+    '====================================================
+    ' MENSAJE FINAL
+    '====================================================
+
+    MsgBox _
+        "REGISTRAR FUE LIMPIADO CORRECTAMENTE." & _
+        vbCrLf & vbCrLf & _
+        "Los datos anteriores fueron eliminados." & _
+        vbCrLf & _
+        "Los desplegables y la estructura se conservaron." & _
+        vbCrLf & vbCrLf & _
+        "Ya puedes volver a capturar o importar registros.", _
+        vbInformation, _
+        "REGISTRAR LIMPIO"
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "NO SE PUDO LIMPIAR REGISTRAR." & _
+        vbCrLf & vbCrLf & _
+        "ERROR " & Err.Number & ":" & _
+        vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "ERROR AL LIMPIAR"
+
+End Sub
