@@ -1,0 +1,1196 @@
+Option Explicit
+
+'========================================================
+' MODMODIFICAR
+'
+' CARGA DE ACCESS ÚNICAMENTE:
+'
+' C_B = P
+'
+' ORDEN:
+' MÁS RECIENTE → MÁS ANTIGUO
+'
+' ID NO SE UTILIZA COMO CAMPO.
+'
+' SE TRABAJA DESDE RFC HASTA SEXO.
+'========================================================
+
+Private Const HOJA_MODIFICAR As String = "MODIFICAR"
+Private Const TABLA_ACCESS As String = "MOVIMIENTOS"
+
+Private Const FILA_LISTA As Long = 8
+
+Private Const COL_FECHA As Long = 41
+Private Const COL_RFC As Long = 42
+Private Const COL_NOMBRE As Long = 43
+Private Const COL_CURP As Long = 44
+Private Const COL_CB As Long = 45
+
+
+'========================================================
+' CARGAR PENDIENTES
+'========================================================
+
+Public Sub CargarPendientes()
+
+    Dim ws As Worksheet
+
+    Dim cn As Object
+    Dim rs As Object
+
+    Dim sql As String
+
+    Dim fila As Long
+
+    Dim total As Long
+
+
+    On Error GoTo ErrorHandler
+
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_MODIFICAR)
+
+
+    Application.ScreenUpdating = False
+
+
+    '====================================================
+    ' LIMPIAR LISTA ANTERIOR
+    '====================================================
+
+    ws.Range( _
+        ws.Cells(FILA_LISTA, COL_FECHA), _
+        ws.Cells(5000, COL_CB)).ClearContents
+
+
+    '====================================================
+    ' ENCABEZADOS
+    '====================================================
+
+    ws.Cells(FILA_LISTA, COL_FECHA).Value = _
+        "FECHA SOLICITUD"
+
+    ws.Cells(FILA_LISTA, COL_RFC).Value = _
+        "RFC"
+
+    ws.Cells(FILA_LISTA, COL_NOMBRE).Value = _
+        "NOMBRE"
+
+    ws.Cells(FILA_LISTA, COL_CURP).Value = _
+        "CURP"
+
+    ws.Cells(FILA_LISTA, COL_CB).Value = _
+        "C_B"
+
+
+    '====================================================
+    ' CONEXIÓN
+    '====================================================
+
+    Set cn = AbrirConexionAccess()
+
+
+    If cn Is Nothing Then
+
+        MsgBox _
+            "No se pudo conectar con Access.", _
+            vbCritical, _
+            "MODIFICAR"
+
+        GoTo Salir
+
+    End If
+
+
+    '====================================================
+    ' BUSCAR C_B = P
+    '====================================================
+
+    sql = _
+        "SELECT " & _
+        "[RFC]," & _
+        "[NOMBRE]," & _
+        "[CURP]," & _
+        "[C_B]," & _
+        "[FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO] " & _
+        "FROM [" & TABLA_ACCESS & "] " & _
+        "WHERE UCase(Trim([C_B]))='P'"
+
+
+    Set rs = cn.Execute(sql)
+
+
+    fila = FILA_LISTA + 1
+
+
+    '====================================================
+    ' CARGAR LISTA
+    '====================================================
+
+    Do While Not rs.EOF
+
+
+        ws.Cells(fila, COL_FECHA).Value = _
+            TextoSeguro( _
+                rs.Fields( _
+                    "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO").Value)
+
+
+        ws.Cells(fila, COL_RFC).NumberFormat = "@"
+
+        ws.Cells(fila, COL_RFC).Value = _
+            TextoSeguro( _
+                rs.Fields("RFC").Value)
+
+
+        ws.Cells(fila, COL_NOMBRE).Value = _
+            TextoSeguro( _
+                rs.Fields("NOMBRE").Value)
+
+
+        ws.Cells(fila, COL_CURP).NumberFormat = "@"
+
+        ws.Cells(fila, COL_CURP).Value = _
+            TextoSeguro( _
+                rs.Fields("CURP").Value)
+
+
+        ws.Cells(fila, COL_CB).Value = _
+            TextoSeguro( _
+                rs.Fields("C_B").Value)
+
+
+        fila = fila + 1
+
+        total = total + 1
+
+
+        rs.MoveNext
+
+    Loop
+
+
+    '====================================================
+    ' ORDENAR
+    '====================================================
+
+    If total > 1 Then
+
+        OrdenarPendientes _
+            ws, _
+            FILA_LISTA + 1, _
+            fila - 1
+
+    End If
+
+
+    ws.Columns(COL_FECHA).ColumnWidth = 18
+    ws.Columns(COL_RFC).ColumnWidth = 18
+    ws.Columns(COL_NOMBRE).ColumnWidth = 30
+    ws.Columns(COL_CURP).ColumnWidth = 22
+    ws.Columns(COL_CB).ColumnWidth = 8
+
+
+    MsgBox _
+        "Pendientes encontrados: " & total & _
+        vbCrLf & vbCrLf & _
+        "Ordenados del más reciente al más antiguo.", _
+        vbInformation, _
+        "MODIFICAR"
+
+
+Salir:
+
+    On Error Resume Next
+
+    If Not rs Is Nothing Then rs.Close
+    If Not cn Is Nothing Then cn.Close
+
+    Application.ScreenUpdating = True
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    MsgBox _
+        "ERROR AL CARGAR PENDIENTES." & vbCrLf & vbCrLf & _
+        Err.Number & " - " & Err.Description, _
+        vbCritical, _
+        "MODIFICAR"
+
+    Resume Salir
+
+End Sub
+
+
+'========================================================
+' ORDENAR
+'========================================================
+
+Private Sub OrdenarPendientes( _
+    ByVal ws As Worksheet, _
+    ByVal filaInicial As Long, _
+    ByVal filaFinal As Long)
+
+    Dim i As Long
+    Dim j As Long
+
+    Dim fechaI As Variant
+    Dim fechaJ As Variant
+
+    Dim datosI As Variant
+    Dim datosJ As Variant
+
+
+    For i = filaInicial To filaFinal - 1
+
+        For j = i + 1 To filaFinal
+
+
+            fechaI = _
+                ConvertirFecha( _
+                    ws.Cells(i, COL_FECHA).Value)
+
+
+            fechaJ = _
+                ConvertirFecha( _
+                    ws.Cells(j, COL_FECHA).Value)
+
+
+            If FechaAnterior( _
+                fechaI, _
+                fechaJ) Then
+
+
+                datosI = _
+                    ws.Range( _
+                        ws.Cells(i, COL_FECHA), _
+                        ws.Cells(i, COL_CB)).Value
+
+
+                datosJ = _
+                    ws.Range( _
+                        ws.Cells(j, COL_FECHA), _
+                        ws.Cells(j, COL_CB)).Value
+
+
+                ws.Range( _
+                    ws.Cells(i, COL_FECHA), _
+                    ws.Cells(i, COL_CB)).Value = datosJ
+
+
+                ws.Range( _
+                    ws.Cells(j, COL_FECHA), _
+                    ws.Cells(j, COL_CB)).Value = datosI
+
+            End If
+
+        Next j
+
+    Next i
+
+End Sub
+
+
+'========================================================
+' COMPARAR FECHAS
+'========================================================
+
+Private Function FechaAnterior( _
+    ByVal fechaA As Variant, _
+    ByVal fechaB As Variant) As Boolean
+
+
+    If IsEmpty(fechaA) Then Exit Function
+
+
+    If Not IsDate(fechaA) Then Exit Function
+
+
+    If IsEmpty(fechaB) Then
+
+        FechaAnterior = True
+
+        Exit Function
+
+    End If
+
+
+    If Not IsDate(fechaB) Then
+
+        FechaAnterior = True
+
+        Exit Function
+
+    End If
+
+
+    FechaAnterior = _
+        CDate(fechaA) < CDate(fechaB)
+
+End Function
+
+
+'========================================================
+' SELECCIONAR REGISTRO
+'========================================================
+
+Public Sub ModificarRegistroSeleccionado()
+
+    Dim ws As Worksheet
+
+    Dim fila As Long
+
+    Dim rfc As String
+    Dim curp As String
+
+
+    On Error GoTo ErrorHandler
+
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_MODIFICAR)
+
+
+    fila = ActiveCell.Row
+
+
+    If fila <= FILA_LISTA Then
+
+        MsgBox _
+            "Selecciona primero un registro.", _
+            vbExclamation, _
+            "MODIFICAR"
+
+        Exit Sub
+
+    End If
+
+
+    rfc = _
+        TextoSeguro( _
+            ws.Cells(fila, COL_RFC).Value)
+
+
+    curp = _
+        TextoSeguro( _
+            ws.Cells(fila, COL_CURP).Value)
+
+
+    If rfc = "" And curp = "" Then
+
+        MsgBox _
+            "El registro no tiene RFC ni CURP.", _
+            vbExclamation, _
+            "MODIFICAR"
+
+        Exit Sub
+
+    End If
+
+
+    CargarRegistro _
+        ws, _
+        rfc, _
+        curp
+
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    MsgBox _
+        "ERROR AL SELECCIONAR." & vbCrLf & vbCrLf & _
+        Err.Number & " - " & Err.Description, _
+        vbCritical, _
+        "MODIFICAR"
+
+End Sub
+
+
+'========================================================
+' CARGAR REGISTRO
+'========================================================
+
+Private Sub CargarRegistro( _
+    ByVal ws As Worksheet, _
+    ByVal rfc As String, _
+    ByVal curp As String)
+
+    Dim cn As Object
+    Dim rs As Object
+
+    Dim sql As String
+    Dim criterio As String
+
+    Dim c As Long
+
+    Dim campo As String
+    Dim valor As Variant
+
+
+    On Error GoTo ErrorHandler
+
+
+    Set cn = AbrirConexionAccess()
+
+
+    If cn Is Nothing Then Exit Sub
+
+
+    If rfc <> "" Then
+
+        criterio = _
+            "[RFC]='" & _
+            Replace(rfc, "'", "''") & "'"
+
+    Else
+
+        criterio = _
+            "[CURP]='" & _
+            Replace(curp, "'", "''") & "'"
+
+    End If
+
+
+    sql = _
+        "SELECT * FROM [" & TABLA_ACCESS & "] " & _
+        "WHERE " & criterio & _
+        " AND UCase(Trim([C_B]))='P'"
+
+
+    Set rs = cn.Execute(sql)
+
+
+    If rs.EOF Then
+
+        MsgBox _
+            "El registro ya no está pendiente.", _
+            vbInformation, _
+            "MODIFICAR"
+
+        GoTo Salir
+
+    End If
+
+
+    '====================================================
+    ' LIMPIAR CAMPOS DE EDICIÓN
+    '====================================================
+
+    LimpiarAreaEdicion ws
+
+
+    '====================================================
+    ' CARGAR RFC → SEXO
+    '
+    ' ID QUEDA FUERA.
+    '====================================================
+
+    For c = 0 To rs.Fields.Count - 1
+
+
+        campo = rs.Fields(c).Name
+
+
+        If EsCampoModificar(campo) Then
+
+            valor = rs.Fields(c).Value
+
+            EscribirCampo _
+                ws, _
+                campo, _
+                valor
+
+        End If
+
+
+    Next c
+
+
+    '====================================================
+    ' GUARDAR REFERENCIA
+    '
+    ' NO ES ID.
+    '====================================================
+
+    ws.Range("AZ1").Value = rfc
+    ws.Range("AZ2").Value = curp
+    ws.Range("AZ3").Value = "REGISTRO_CARGADO"
+
+
+    MsgBox _
+        "Registro cargado correctamente." & _
+        vbCrLf & vbCrLf & _
+        "Ya puedes modificar los datos.", _
+        vbInformation, _
+        "MODIFICAR"
+
+
+Salir:
+
+    On Error Resume Next
+
+    If Not rs Is Nothing Then rs.Close
+    If Not cn Is Nothing Then cn.Close
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    MsgBox _
+        "ERROR AL CARGAR EL REGISTRO." & vbCrLf & vbCrLf & _
+        Err.Number & " - " & Err.Description, _
+        vbCritical, _
+        "MODIFICAR"
+
+    Resume Salir
+
+End Sub
+
+
+'========================================================
+' CAMPOS EDITABLES
+'
+' RFC → SEXO
+'========================================================
+
+Private Function EsCampoModificar( _
+    ByVal campo As String) As Boolean
+
+    Select Case NormalizarTexto(campo)
+
+        Case "RFC", _
+             "RFCCOMPLETO", _
+             "HOM", _
+             "PATERNO", _
+             "MATERNO", _
+             "NOMBRE", _
+             "CURP", _
+             "NIVEL", _
+             "UR", _
+             "PORMEDIODE", _
+             "SOLICITAPORCENTAJE", _
+             "PORCENTAJE", _
+             "QNA", _
+             "ANO", _
+             "CB", _
+             "FECHASOLICITAAHOROCUANDOINGRESO", _
+             "FECHAAPLICARAHORRO", _
+             "FECHAHOY", _
+             "RESULTADOANALISIS", _
+             "QNAAPLICACION", _
+             "OBSERVACIONES", _
+             "REGIMENENSINAVIDISSSTE", _
+             "REGIMENENSIRI", _
+             "DIAENQUESETRABAJALASOLICITUD", _
+             "SARHAPLICACIONDEAHORROSOLIDARIO", _
+             "ACTIVOINACTIVOENISSSTE", _
+             "CURPSHISTORICAS", _
+             "SOLICITUDESPOROFICIO", _
+             "OFICIOFOLIO", _
+             "CORREOELECTRONICO", _
+             "DESCARGOSAC", _
+             "AREADIRECCION", _
+             "CONTEOOFICIOS", _
+             "MESDECAPTURA", _
+             "ALTABAJA", _
+             "REVISO", _
+             "ESCANERSEPARADO", _
+             "SEXO"
+
+            EsCampoModificar = True
+
+        Case Else
+
+            EsCampoModificar = False
+
+    End Select
+
+End Function
+
+
+'========================================================
+' ESCRIBIR CAMPO
+'========================================================
+
+Private Sub EscribirCampo( _
+    ByVal ws As Worksheet, _
+    ByVal campo As String, _
+    ByVal valor As Variant)
+
+    Dim celda As Range
+
+
+    Set celda = _
+        BuscarEncabezado(ws, campo)
+
+
+    If celda Is Nothing Then Exit Sub
+
+
+    If IsNull(valor) Or IsError(valor) Then
+
+        celda.Offset(1, 0).Value = ""
+
+    Else
+
+        celda.Offset(1, 0).Value = valor
+
+    End If
+
+End Sub
+
+
+'========================================================
+' BUSCAR ENCABEZADO
+'========================================================
+
+Private Function BuscarEncabezado( _
+    ByVal ws As Worksheet, _
+    ByVal campo As String) As Range
+
+    Dim c As Range
+
+
+    For Each c In ws.UsedRange
+
+        If NormalizarTexto( _
+            TextoSeguro(c.Value)) = _
+            NormalizarTexto(campo) Then
+
+            Set BuscarEncabezado = c
+
+            Exit Function
+
+        End If
+
+    Next c
+
+
+    Set BuscarEncabezado = Nothing
+
+End Function
+
+
+'========================================================
+' LIMPIAR ÁREA DE EDICIÓN
+'========================================================
+
+Private Sub LimpiarAreaEdicion( _
+    ByVal ws As Worksheet)
+
+    Dim c As Range
+
+
+    For Each c In ws.UsedRange
+
+        If EsCampoModificar( _
+            TextoSeguro(c.Value)) Then
+
+            c.Offset(1, 0).ClearContents
+
+        End If
+
+    Next c
+
+End Sub
+
+
+'========================================================
+' GUARDAR MODIFICACIÓN
+'========================================================
+
+Public Sub GuardarModificacion()
+
+    Dim ws As Worksheet
+
+    Dim cn As Object
+
+    Dim sql As String
+    Dim campos As String
+    Dim criterio As String
+
+    Dim c As Range
+
+    Dim campo As String
+    Dim valor As Variant
+
+
+    On Error GoTo ErrorHandler
+
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_MODIFICAR)
+
+
+    If ws.Range("AZ3").Value <> _
+        "REGISTRO_CARGADO" Then
+
+        MsgBox _
+            "Primero debes seleccionar un registro pendiente.", _
+            vbExclamation, _
+            "MODIFICAR"
+
+        Exit Sub
+
+    End If
+
+
+    Set cn = AbrirConexionAccess()
+
+
+    If cn Is Nothing Then
+
+        MsgBox _
+            "No se pudo conectar con Access.", _
+            vbCritical, _
+            "MODIFICAR"
+
+        Exit Sub
+
+    End If
+
+
+    '====================================================
+    ' CONSTRUIR UPDATE
+    '====================================================
+
+    campos = ""
+
+
+    For Each c In ws.UsedRange
+
+        campo = _
+            TextoSeguro(c.Value)
+
+
+        If EsCampoModificar(campo) Then
+
+            valor = c.Offset(1, 0).Value
+
+
+            If campos <> "" Then
+
+                campos = campos & ","
+
+            End If
+
+
+            campos = campos & _
+                "[" & CampoAccess(campo) & "]=" & _
+                ValorSQL(valor)
+
+        End If
+
+    Next c
+
+
+    If campos = "" Then
+
+        MsgBox _
+            "No se encontraron campos para actualizar.", _
+            vbExclamation, _
+            "MODIFICAR"
+
+        GoTo Salir
+
+    End If
+
+
+    '====================================================
+    ' BUSCAR POR RFC
+    ' SI NO HAY RFC, USA CURP
+    '
+    ' NO ID.
+    '====================================================
+
+    If Trim$( _
+        CStr(ws.Range("AZ1").Value)) <> "" Then
+
+        criterio = _
+            "[RFC]='" & _
+            Replace( _
+                CStr(ws.Range("AZ1").Value), _
+                "'", "''") & _
+            "'"
+
+    Else
+
+        criterio = _
+            "[CURP]='" & _
+            Replace( _
+                CStr(ws.Range("AZ2").Value), _
+                "'", "''") & _
+            "'"
+
+    End If
+
+
+    '====================================================
+    ' SOLO ACTUALIZAR SI SIGUE PENDIENTE
+    '====================================================
+
+    sql = _
+        "UPDATE [" & TABLA_ACCESS & "] SET " & _
+        campos & _
+        " WHERE " & criterio & _
+        " AND UCase(Trim([C_B]))='P'"
+
+
+    cn.Execute sql
+
+
+    ws.Range("AZ1:AZ3").ClearContents
+
+
+    MsgBox _
+        "MODIFICACIÓN GUARDADA CORRECTAMENTE.", _
+        vbInformation, _
+        "MODIFICAR"
+
+
+    '====================================================
+    ' ACTUALIZAR LISTA
+    '====================================================
+
+    CargarPendientes
+
+
+Salir:
+
+    On Error Resume Next
+
+    If Not cn Is Nothing Then cn.Close
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    MsgBox _
+        "ERROR AL GUARDAR LA MODIFICACIÓN." & vbCrLf & vbCrLf & _
+        Err.Number & " - " & Err.Description, _
+        vbCritical, _
+        "MODIFICAR"
+
+    Resume Salir
+
+End Sub
+
+
+'========================================================
+' CONVERTIR NOMBRE DE EXCEL AL NOMBRE REAL DE ACCESS
+'========================================================
+
+Private Function CampoAccess( _
+    ByVal campo As String) As String
+
+    Select Case NormalizarTexto(campo)
+
+        Case "RFCCOMPLETO"
+
+            CampoAccess = "RFC_COMPLETO"
+
+        Case "PORMEDIODE"
+
+            CampoAccess = "POR MEDIO DE: "
+
+        Case "SOLICITAPORCENTAJE"
+
+            CampoAccess = "SOLICITA %"
+
+        Case "PORCENTAJE"
+
+            CampoAccess = "%"
+
+        Case "ANO"
+
+            CampoAccess = "AÑO"
+
+        Case "CB"
+
+            CampoAccess = "C_B"
+
+        Case "FECHASOLICITAAHOROCUANDOINGRESO"
+
+            CampoAccess = _
+                "FECHA_SOLICITA AHORRO O CUANDO INGRESO "
+
+        Case "FECHAAPLICARAHORRO"
+
+            CampoAccess = "FECHA_APLICAR AHORRO"
+
+        Case "FECHAHOY"
+
+            CampoAccess = "FECHA HOY"
+
+        Case "RESULTADOANALISIS"
+
+            CampoAccess = "RESULTADO ANALISIS"
+
+        Case "QNAAPLICACION"
+
+            CampoAccess = "QNA_APLICACION"
+
+        Case "REGIMENENSINAVIDISSSTE"
+
+            CampoAccess = _
+                "REGIMEN EN SINAVID/ISSSTE"
+
+        Case "REGIMENENSIRI"
+
+            CampoAccess = _
+                "REGIMEN EN SIRI (ES EL QUE MAS IMPORTANCIA TIENE PARA APLICARO AHORRO SOLIDARIO)"
+
+        Case "DIAENQUESETRABAJALASOLICITUD"
+
+            CampoAccess = _
+                "DIA EN QUE SE TRABAJA LA SOLICITUD"
+
+        Case "SARHAPLICACIONDEAHORROSOLIDARIO"
+
+            CampoAccess = _
+                "SARH: APLICACIÓN DE AHORRO SOLIDARIO"
+
+        Case "ACTIVOINACTIVOENISSSTE"
+
+            CampoAccess = _
+                "ACTIVO / INACTIVO EN ISSSTE PARA DAR ALTA O BAJA"
+
+        Case "CURPSHISTORICAS"
+
+            CampoAccess = _
+                "CURP'S HISTORICAS (POR SI NO SE PUEDE ACCEDER A SINAVID PUEDE TENER UNA CURP ANTERIOR EN RENAPO)"
+
+        Case "SOLICITUDESPOROFICIO"
+
+            CampoAccess = _
+                "SOLICITUDES POR OFICIO"
+
+        Case "OFICIOFOLIO"
+
+            CampoAccess = _
+                "OFICIO FOLIO"
+
+        Case "CORREOELECTRONICO"
+
+            CampoAccess = _
+                "CORREO ELECTRONICO"
+
+        Case "DESCARGOSAC"
+
+            CampoAccess = _
+                "DESCARGO SAC"
+
+        Case "AREADIRECCION"
+
+            CampoAccess = _
+                "AREA/DIRECCION"
+
+        Case "CONTEOOFICIOS"
+
+            CampoAccess = _
+                "CONTEO OFICIOS"
+
+        Case "MESDECAPTURA"
+
+            CampoAccess = _
+                "MES DE CAPTURA"
+
+        Case "ALTABAJA"
+
+            CampoAccess = _
+                "ALTA/BAJA"
+
+        Case "ESCANERSEPARADO"
+
+            CampoAccess = _
+                "ESCANER - SEPARADO"
+
+        Case Else
+
+            CampoAccess = campo
+
+    End Select
+
+End Function
+
+
+'========================================================
+' VALOR SQL
+'========================================================
+
+Private Function ValorSQL( _
+    ByVal valor As Variant) As String
+
+    If IsError(valor) Or IsNull(valor) Then
+
+        ValorSQL = "NULL"
+
+        Exit Function
+
+    End If
+
+
+    If Trim$(CStr(valor)) = "" Then
+
+        ValorSQL = "''"
+
+        Exit Function
+
+    End If
+
+
+    ValorSQL = _
+        "'" & _
+        Replace(CStr(valor), "'", "''") & _
+        "'"
+
+End Function
+
+
+'========================================================
+' NORMALIZAR
+'========================================================
+
+Private Function NormalizarTexto( _
+    ByVal texto As String) As String
+
+    texto = UCase$(Trim$(texto))
+
+    texto = Replace(texto, "Á", "A")
+    texto = Replace(texto, "É", "E")
+    texto = Replace(texto, "Í", "I")
+    texto = Replace(texto, "Ó", "O")
+    texto = Replace(texto, "Ú", "U")
+    texto = Replace(texto, "Ü", "U")
+    texto = Replace(texto, "Ñ", "N")
+
+    texto = Replace(texto, " ", "")
+    texto = Replace(texto, ".", "")
+    texto = Replace(texto, "-", "")
+    texto = Replace(texto, "_", "")
+    texto = Replace(texto, "/", "")
+    texto = Replace(texto, "\", "")
+    texto = Replace(texto, "(", "")
+    texto = Replace(texto, ")", "")
+    texto = Replace(texto, ":", "")
+    texto = Replace(texto, "'", "")
+
+    NormalizarTexto = texto
+
+End Function
+
+
+'========================================================
+' CONVERTIR FECHA
+'========================================================
+
+Private Function ConvertirFecha( _
+    ByVal valor As Variant) As Variant
+
+    Dim texto As String
+    Dim p() As String
+
+    Dim d As Integer
+    Dim m As Integer
+    Dim a As Integer
+
+
+    On Error GoTo ErrorFecha
+
+
+    If IsNull(valor) Or IsError(valor) Then
+
+        ConvertirFecha = Empty
+        Exit Function
+
+    End If
+
+
+    If IsDate(valor) Then
+
+        ConvertirFecha = CDate(valor)
+        Exit Function
+
+    End If
+
+
+    texto = Trim$(CStr(valor))
+
+
+    If texto = "" Then
+
+        ConvertirFecha = Empty
+        Exit Function
+
+    End If
+
+
+    texto = Replace(texto, "-", "/")
+    texto = Replace(texto, ".", "/")
+
+
+    p = Split(texto, "/")
+
+
+    If UBound(p) <> 2 Then
+
+        ConvertirFecha = Empty
+        Exit Function
+
+    End If
+
+
+    d = CInt(p(0))
+    m = CInt(p(1))
+    a = CInt(p(2))
+
+
+    If a < 100 Then a = a + 2000
+
+
+    ConvertirFecha = _
+        DateSerial(a, m, d)
+
+
+    Exit Function
+
+
+ErrorFecha:
+
+    ConvertirFecha = Empty
+
+End Function
+
+
+'========================================================
+' TEXTO SEGURO
+'========================================================
+
+Private Function TextoSeguro( _
+    ByVal valor As Variant) As String
+
+    If IsError(valor) Then
+
+        TextoSeguro = ""
+
+    ElseIf IsNull(valor) Then
+
+        TextoSeguro = ""
+
+    Else
+
+        TextoSeguro = Trim$(CStr(valor))
+
+    End If
+
+End Function
