@@ -2,45 +2,40 @@ Option Explicit
 
 '==========================================================
 ' MODIMPORTAR
+'==========================================================
 '
-' IMPORTACION DE ARCHIVOS QNA
+' IMPORTACION DE ARCHIVOS EXCEL
 '
-' FORMATO DE EJEMPLO:
+' REGLA PRINCIPAL:
 '
-' FOLIO
-' FOLIO2
-' QUINCENA
-' CICLO
-' NUM_EMP
-' RFC
-' HOM
-' PATERNO
-' MATERNO
-' NOMBRE
-' CURP
-' ...
+' SOLO SE COPIAN CAMPOS CUYO ENCABEZADO EXISTA
+' EN NUESTRA HOJA REGISTRAR.
 '
-' LOGICA:
+' NO SE CREAN EQUIVALENCIAS.
 '
-' 1. Selecciona archivo Excel.
-' 2. Busca automaticamente la fila de encabezados.
-' 3. Reconoce el formato QNA.
-' 4. Busca registros por RFC.
-' 5. Si no encuentra RFC, intenta CURP.
-' 6. Compara CICLO + QUINCENA.
-' 7. Si es nuevo o mas reciente:
-'       -> lo coloca en REGISTRAR.
-' 8. No modifica Access.
-' 9. No importa ID.
+' Ejemplo:
+'
+' RFC       -> RFC       SI COINCIDE
+' HOM       -> HOM       SI COINCIDE
+' CURP      -> CURP      SI COINCIDE
+'
+' QUINCENA  -> QNA       NO SE COPIA
+' CICLO     -> AÑO       NO SE COPIA
+'
+' QUINCENA + CICLO solamente se utilizan para
+' determinar si el archivo externo corresponde
+' a un movimiento más reciente.
 '
 '==========================================================
 
 
 Private Const HOJA_REGISTRAR As String = "REGISTRAR"
 
-Private Const FILA_INICIO_REGISTRAR As Long = 9
+Private Const FILA_INICIAL_BUSQUEDA As Long = 1
 
-Private Const TABLA_ACCESS As String = "MOVIMIENTOS"
+Private Const MAX_FILAS_BUSCAR_ENCABEZADO As Long = 100
+
+Private Const MAX_COLUMNAS_BUSCAR_ENCABEZADO As Long = 150
 
 
 '==========================================================
@@ -65,7 +60,7 @@ Public Sub ImportarArchivoExterno()
 
     With fd
 
-        .Title = "Seleccionar archivo QNA"
+        .Title = "Seleccionar archivo para importar"
 
         .AllowMultiSelect = False
 
@@ -80,7 +75,11 @@ Public Sub ImportarArchivoExterno()
             "*.pdf"
 
 
-        If .Show <> -1 Then Exit Sub
+        If .Show <> -1 Then
+
+            Exit Sub
+
+        End If
 
 
         ruta = .SelectedItems(1)
@@ -98,14 +97,13 @@ Public Sub ImportarArchivoExterno()
 
         Case "xlsx", "xls", "xlsm"
 
-            ImportarQNA ruta
+            ImportarExcel ruta
 
 
         Case "pdf"
 
             MsgBox _
-                "El archivo seleccionado es PDF." & _
-                vbCrLf & vbCrLf & _
+                "El archivo es PDF." & vbCrLf & vbCrLf & _
                 "La lectura automatica de PDF " & _
                 "todavia no esta habilitada.", _
                 vbInformation, _
@@ -115,7 +113,7 @@ Public Sub ImportarArchivoExterno()
         Case Else
 
             MsgBox _
-                "Formato no compatible.", _
+                "El formato seleccionado no es compatible.", _
                 vbExclamation, _
                 "IMPORTAR"
 
@@ -128,11 +126,9 @@ Public Sub ImportarArchivoExterno()
 ErrorHandler:
 
     MsgBox _
-        "ERROR AL SELECCIONAR ARCHIVO." & _
-        vbCrLf & vbCrLf & _
-        "Numero: " & Err.Number & _
-        vbCrLf & _
-        Err.Description, _
+        "ERROR AL SELECCIONAR EL ARCHIVO." & vbCrLf & vbCrLf & _
+        "Numero: " & Err.Number & vbCrLf & _
+        "Descripcion: " & Err.Description, _
         vbCritical, _
         "IMPORTAR"
 
@@ -140,11 +136,10 @@ End Sub
 
 
 '==========================================================
-' IMPORTAR QNA
+' IMPORTAR EXCEL
 '==========================================================
 
-Private Sub ImportarQNA( _
-    ByVal ruta As String)
+Private Sub ImportarExcel(ByVal ruta As String)
 
     Dim wb As Workbook
 
@@ -152,47 +147,37 @@ Private Sub ImportarQNA( _
 
     Dim wsDestino As Worksheet
 
+    Dim filaEncabezados As Long
 
     Dim ultimaFila As Long
 
     Dim ultimaColumna As Long
 
-    Dim filaEncabezados As Long
+    Dim mapaOrigen As Object
 
-
-    Dim mapa As Object
+    Dim mapaDestino As Object
 
     Dim fila As Long
 
     Dim filaDestino As Long
 
+    Dim registrosAgregados As Long
+
+    Dim registrosIgnorados As Long
 
     Dim rfc As String
 
     Dim curp As String
 
-    Dim nombre As String
+    Dim qnaExterna As Long
 
-    Dim paterno As String
+    Dim cicloExterno As Long
 
-    Dim materno As String
+    Dim qnaAccess As Long
 
-
-    Dim qnaNueva As Long
-
-    Dim cicloNuevo As Long
-
+    Dim cicloAccess As Long
 
     Dim existe As Boolean
-
-    Dim qnaAnterior As Long
-
-    Dim cicloAnterior As Long
-
-
-    Dim cargados As Long
-
-    Dim ignorados As Long
 
 
     On Error GoTo ErrorHandler
@@ -218,19 +203,23 @@ Private Sub ImportarQNA( _
     If wb Is Nothing Then
 
         Err.Raise _
-            vbObjectError + 1000, _
-            "ImportarQNA", _
-            "No fue posible abrir el archivo."
+            vbObjectError + 2000, _
+            "ImportarExcel", _
+            "No se pudo abrir el archivo."
 
     End If
 
 
     '======================================================
-    ' USAR PRIMERA HOJA
+    ' PRIMERA HOJA
     '======================================================
 
     Set wsOrigen = wb.Worksheets(1)
 
+
+    '======================================================
+    ' HOJA REGISTRAR
+    '======================================================
 
     Set wsDestino = _
         ThisWorkbook.Worksheets( _
@@ -238,7 +227,7 @@ Private Sub ImportarQNA( _
 
 
     '======================================================
-    ' BUSCAR DIMENSIONES
+    ' DIMENSIONES DEL ARCHIVO
     '======================================================
 
     ObtenerDimensiones _
@@ -251,9 +240,9 @@ Private Sub ImportarQNA( _
        ultimaColumna = 0 Then
 
         Err.Raise _
-            vbObjectError + 1001, _
-            "ImportarQNA", _
-            "El archivo esta vacio."
+            vbObjectError + 2001, _
+            "ImportarExcel", _
+            "El archivo no contiene datos."
 
     End If
 
@@ -272,73 +261,66 @@ Private Sub ImportarQNA( _
     If filaEncabezados = 0 Then
 
         Err.Raise _
-            vbObjectError + 1002, _
-            "ImportarQNA", _
-            "No se encontraron encabezados QNA."
+            vbObjectError + 2002, _
+            "ImportarExcel", _
+            "No se encontro la fila de encabezados."
 
     End If
 
 
     '======================================================
-    ' CREAR MAPA
+    ' MAPA DE ENCABEZADOS DEL ARCHIVO
     '======================================================
 
-    Set mapa = _
-        CrearMapaQNA( _
+    Set mapaOrigen = _
+        CrearMapaEncabezados( _
             wsOrigen, _
             filaEncabezados, _
             ultimaColumna)
 
 
     '======================================================
-    ' COMPROBAR CAMPOS MINIMOS
+    ' MAPA DE ENCABEZADOS DE REGISTRAR
     '======================================================
 
-    If Not mapa.Exists("RFC") And _
-       Not mapa.Exists("CURP") Then
-
-        Err.Raise _
-            vbObjectError + 1003, _
-            "ImportarQNA", _
-            "No se encontro RFC ni CURP."
-
-    End If
+    Set mapaDestino = _
+        CrearMapaEncabezadosHoja( _
+            wsDestino)
 
 
-    If Not mapa.Exists("QUINCENA") Then
+    '======================================================
+    ' RFC ES NECESARIO PARA LA IDENTIFICACION
+    '======================================================
 
-        Err.Raise _
-            vbObjectError + 1004, _
-            "ImportarQNA", _
-            "No se encontro el encabezado QUINCENA."
+    If Not mapaOrigen.Exists("RFC") Then
 
-    End If
+        MsgBox _
+            "El archivo no contiene el encabezado RFC." & _
+            vbCrLf & vbCrLf & _
+            "No se puede realizar la importacion.", _
+            vbExclamation, _
+            "IMPORTAR"
 
-
-    If Not mapa.Exists("CICLO") Then
-
-        Err.Raise _
-            vbObjectError + 1005, _
-            "ImportarQNA", _
-            "No se encontro el encabezado CICLO."
+        GoTo Salir
 
     End If
 
 
     '======================================================
-    ' PRIMERA FILA LIBRE
+    ' PRIMERA FILA LIBRE EN REGISTRAR
     '======================================================
 
     filaDestino = _
         PrimeraFilaLibre( _
-            wsDestino)
+            wsDestino, _
+            mapaDestino)
 
 
     If filaDestino = 0 Then GoTo Salir
 
 
     '======================================================
-    ' RECORRER REGISTROS
+    ' RECORRER REGISTROS DEL EXCEL
     '======================================================
 
     For fila = _
@@ -346,170 +328,126 @@ Private Sub ImportarQNA( _
         To ultimaFila
 
 
-        '--------------------------------------------------
-        ' IDENTIFICADORES
-        '--------------------------------------------------
-
-        rfc = _
-            ObtenerCampo( _
-                wsOrigen, _
-                fila, _
-                mapa, _
-                "RFC")
+        rfc = ObtenerValorCampo( _
+            wsOrigen, _
+            fila, _
+            mapaOrigen, _
+            "RFC")
 
 
-        curp = _
-            ObtenerCampo( _
-                wsOrigen, _
-                fila, _
-                mapa, _
-                "CURP")
-
-
-        nombre = _
-            ObtenerCampo( _
-                wsOrigen, _
-                fila, _
-                mapa, _
-                "NOMBRE")
-
-
-        paterno = _
-            ObtenerCampo( _
-                wsOrigen, _
-                fila, _
-                mapa, _
-                "PATERNO")
-
-
-        materno = _
-            ObtenerCampo( _
-                wsOrigen, _
-                fila, _
-                mapa, _
-                "MATERNO")
+        curp = ObtenerValorCampo( _
+            wsOrigen, _
+            fila, _
+            mapaOrigen, _
+            "CURP")
 
 
         '--------------------------------------------------
-        ' IGNORAR FILAS SIN IDENTIFICADOR
+        ' SI NO HAY RFC NI CURP, IGNORAR FILA
         '--------------------------------------------------
 
         If rfc = "" And curp = "" Then
 
-            ignorados = ignorados + 1
+            registrosIgnorados = _
+                registrosIgnorados + 1
 
-            GoTo SiguienteRegistro
-
-        End If
-
-
-        '--------------------------------------------------
-        ' QNA
-        '--------------------------------------------------
-
-        qnaNueva = _
-            NumeroSeguro( _
-                ObtenerCampo( _
-                    wsOrigen, _
-                    fila, _
-                    mapa, _
-                    "QUINCENA"))
-
-
-        cicloNuevo = _
-            NumeroSeguro( _
-                ObtenerCampo( _
-                    wsOrigen, _
-                    fila, _
-                    mapa, _
-                    "CICLO"))
-
-
-        If qnaNueva = 0 Or _
-           cicloNuevo = 0 Then
-
-            ignorados = ignorados + 1
-
-            GoTo SiguienteRegistro
+            GoTo SiguienteFila
 
         End If
 
 
-        '--------------------------------------------------
+        '==================================================
+        ' QUINCENA Y CICLO
+        '
+        ' SOLO PARA COMPARAR RECENCIA.
+        '
+        ' NO SE COPIAN A QNA / AÑO.
+        '==================================================
+
+        qnaExterna = _
+            ObtenerNumeroCampo( _
+                wsOrigen, _
+                fila, _
+                mapaOrigen, _
+                "QUINCENA")
+
+
+        cicloExterno = _
+            ObtenerNumeroCampo( _
+                wsOrigen, _
+                fila, _
+                mapaOrigen, _
+                "CICLO")
+
+
+        '==================================================
         ' BUSCAR EN ACCESS
-        '--------------------------------------------------
+        '==================================================
 
         existe = _
             BuscarRegistroAccess( _
                 rfc, _
                 curp, _
-                nombre, _
-                paterno, _
-                materno, _
-                qnaAnterior, _
-                cicloAnterior)
+                qnaAccess, _
+                cicloAccess)
 
 
-        '--------------------------------------------------
-        ' NO EXISTE
-        '--------------------------------------------------
+        '==================================================
+        ' SI NO EXISTE
+        '==================================================
 
         If Not existe Then
 
-
-            CopiarRegistroQNA _
+            CopiarCamposCoincidentes _
                 wsOrigen, _
                 wsDestino, _
                 fila, _
                 filaDestino, _
-                mapa
+                mapaOrigen, _
+                mapaDestino
 
 
-            filaDestino = _
-                filaDestino + 1
+            filaDestino = filaDestino + 1
+
+            registrosAgregados = _
+                registrosAgregados + 1
 
 
-            cargados = _
-                cargados + 1
+        '==================================================
+        ' SI EXISTE, COMPARAR RECENCIA
+        '==================================================
+
+        ElseIf QNAExternaEsMasReciente( _
+                    cicloExterno, _
+                    qnaExterna, _
+                    cicloAccess, _
+                    qnaAccess) Then
 
 
-        '--------------------------------------------------
-        ' EXISTE Y EL QNA ES MAS RECIENTE
-        '--------------------------------------------------
-
-        ElseIf QNAEsMasReciente( _
-                    cicloNuevo, _
-                    qnaNueva, _
-                    cicloAnterior, _
-                    qnaAnterior) Then
-
-
-            CopiarRegistroQNA _
+            CopiarCamposCoincidentes _
                 wsOrigen, _
                 wsDestino, _
                 fila, _
                 filaDestino, _
-                mapa
+                mapaOrigen, _
+                mapaDestino
 
 
-            filaDestino = _
-                filaDestino + 1
+            filaDestino = filaDestino + 1
 
-
-            cargados = _
-                cargados + 1
+            registrosAgregados = _
+                registrosAgregados + 1
 
 
         Else
 
-
-            ignorados = _
-                ignorados + 1
+            registrosIgnorados = _
+                registrosIgnorados + 1
 
         End If
 
 
-SiguienteRegistro:
+SiguienteFila:
 
     Next fila
 
@@ -519,17 +457,16 @@ SiguienteRegistro:
     '======================================================
 
     MsgBox _
-        "IMPORTACION TERMINADA." & _
-        vbCrLf & vbCrLf & _
+        "IMPORTACION TERMINADA." & vbCrLf & vbCrLf & _
         "Registros enviados a REGISTRAR: " & _
-        cargados & _
-        vbCrLf & _
+        registrosAgregados & vbCrLf & _
         "Registros ignorados: " & _
-        ignorados & _
-        vbCrLf & vbCrLf & _
-        "Revisa los registros antes de utilizar CREAR.", _
+        registrosIgnorados & vbCrLf & vbCrLf & _
+        "Los registros NO fueron insertados directamente " & _
+        "en Access." & vbCrLf & _
+        "Revisalos antes de utilizar CREAR.", _
         vbInformation, _
-        "IMPORTAR QNA"
+        "IMPORTAR"
 
 
 Salir:
@@ -539,8 +476,7 @@ Salir:
 
     If Not wb Is Nothing Then
 
-        wb.Close _
-            SaveChanges:=False
+        wb.Close SaveChanges:=False
 
     End If
 
@@ -558,13 +494,11 @@ Salir:
 ErrorHandler:
 
     MsgBox _
-        "ERROR DURANTE LA IMPORTACION." & _
-        vbCrLf & vbCrLf & _
-        "Numero: " & Err.Number & _
-        vbCrLf & _
+        "ERROR DURANTE LA IMPORTACION." & vbCrLf & vbCrLf & _
+        "Numero: " & Err.Number & vbCrLf & _
         "Descripcion: " & Err.Description, _
         vbCritical, _
-        "IMPORTAR QNA"
+        "IMPORTAR"
 
 
     Resume Salir
@@ -573,60 +507,11 @@ End Sub
 
 
 '==========================================================
-' OBTENER DIMENSIONES
-'
-' Evitamos Cells.Find para reducir errores 1004.
-'==========================================================
-
-Private Sub ObtenerDimensiones( _
-    ByVal ws As Worksheet, _
-    ByRef ultimaFila As Long, _
-    ByRef ultimaColumna As Long)
-
-
-    Dim ultimaCelda As Range
-
-
-    ultimaFila = 0
-
-    ultimaColumna = 0
-
-
-    On Error Resume Next
-
-
-    Set ultimaCelda = _
-        ws.Cells.SpecialCells( _
-            xlCellTypeLastCell)
-
-
-    On Error GoTo 0
-
-
-    If ultimaCelda Is Nothing Then Exit Sub
-
-
-    ultimaFila = _
-        ultimaCelda.Row
-
-
-    ultimaColumna = _
-        ultimaCelda.Column
-
-End Sub
-
-
-'==========================================================
 ' BUSCAR FILA DE ENCABEZADOS
 '
-' Reconoce el archivo QNA mediante:
+' NO IMPORTA EN QUE FILA SE ENCUENTREN.
 '
-' RFC
-' CURP
-' QUINCENA
-' CICLO
-' PATERNO
-' MATERNO
+' Buscamos RFC + alguno de los campos principales.
 '==========================================================
 
 Private Function BuscarFilaEncabezados( _
@@ -639,20 +524,11 @@ Private Function BuscarFilaEncabezados( _
 
     Dim c As Long
 
-    Dim texto As String
-
+    Dim encabezado As String
 
     Dim tieneRFC As Boolean
 
-    Dim tieneCURP As Boolean
-
-    Dim tieneQNA As Boolean
-
-    Dim tieneCiclo As Boolean
-
-    Dim tienePaterno As Boolean
-
-    Dim tieneMaterno As Boolean
+    Dim cantidadCoincidencias As Long
 
 
     For f = 1 To ultimaFila
@@ -660,57 +536,69 @@ Private Function BuscarFilaEncabezados( _
 
         tieneRFC = False
 
-        tieneCURP = False
-
-        tieneQNA = False
-
-        tieneCiclo = False
-
-        tienePaterno = False
-
-        tieneMaterno = False
+        cantidadCoincidencias = 0
 
 
         For c = 1 To ultimaColumna
 
 
-            texto = _
-                NormalizarTexto( _
+            encabezado = _
+                NormalizarEncabezado( _
                     TextoSeguro( _
                         ws.Cells(f, c).Value))
 
 
-            Select Case texto
+            Select Case encabezado
 
 
                 Case "RFC"
 
                     tieneRFC = True
 
+                    cantidadCoincidencias = _
+                        cantidadCoincidencias + 1
+
+
+                Case "HOM"
+
+                    cantidadCoincidencias = _
+                        cantidadCoincidencias + 1
+
 
                 Case "CURP"
 
-                    tieneCURP = True
-
-
-                Case "QUINCENA"
-
-                    tieneQNA = True
-
-
-                Case "CICLO"
-
-                    tieneCiclo = True
+                    cantidadCoincidencias = _
+                        cantidadCoincidencias + 1
 
 
                 Case "PATERNO"
 
-                    tienePaterno = True
+                    cantidadCoincidencias = _
+                        cantidadCoincidencias + 1
 
 
                 Case "MATERNO"
 
-                    tieneMaterno = True
+                    cantidadCoincidencias = _
+                        cantidadCoincidencias + 1
+
+
+                Case "NOMBRE"
+
+                    cantidadCoincidencias = _
+                        cantidadCoincidencias + 1
+
+
+                Case "NIVEL"
+
+                    cantidadCoincidencias = _
+                        cantidadCoincidencias + 1
+
+
+                Case "UR"
+
+                    cantidadCoincidencias = _
+                        cantidadCoincidencias + 1
 
 
             End Select
@@ -719,18 +607,11 @@ Private Function BuscarFilaEncabezados( _
         Next c
 
 
-        '==================================================
-        ' FORMATO QNA
-        '==================================================
-
-        If _
-            (tieneRFC Or tieneCURP) And _
-            tieneQNA And _
-            tieneCiclo Then
+        If tieneRFC And _
+           cantidadCoincidencias >= 2 Then
 
 
             BuscarFilaEncabezados = f
-
 
             Exit Function
 
@@ -746,10 +627,10 @@ End Function
 
 
 '==========================================================
-' CREAR MAPA QNA
+' CREAR MAPA DE ENCABEZADOS DEL ARCHIVO
 '==========================================================
 
-Private Function CrearMapaQNA( _
+Private Function CrearMapaEncabezados( _
     ByVal ws As Worksheet, _
     ByVal filaEncabezados As Long, _
     ByVal ultimaColumna As Long) As Object
@@ -761,41 +642,33 @@ Private Function CrearMapaQNA( _
 
     Dim encabezado As String
 
-    Dim campo As String
-
 
     Set mapa = _
         CreateObject( _
             "Scripting.Dictionary")
 
 
-    mapa.CompareMode = _
-        vbTextCompare
+    mapa.CompareMode = vbTextCompare
 
 
     For c = 1 To ultimaColumna
 
 
         encabezado = _
-            NormalizarTexto( _
+            NormalizarEncabezado( _
                 TextoSeguro( _
                     ws.Cells( _
                         filaEncabezados, _
                         c).Value))
 
 
-        campo = _
-            EquivalenciaQNA( _
-                encabezado)
+        If encabezado <> "" Then
 
 
-        If campo <> "" Then
-
-
-            If Not mapa.Exists(campo) Then
+            If Not mapa.Exists(encabezado) Then
 
                 mapa.Add _
-                    campo, _
+                    encabezado, _
                     c
 
             End If
@@ -807,181 +680,193 @@ Private Function CrearMapaQNA( _
     Next c
 
 
-    Set CrearMapaQNA = mapa
+    Set CrearMapaEncabezados = mapa
 
 End Function
 
 
 '==========================================================
-' EQUIVALENCIAS QNA
+' MAPA DE ENCABEZADOS DE REGISTRAR
+'
+' BUSCA LOS ENCABEZADOS EN LAS PRIMERAS 20 FILAS.
 '==========================================================
 
-Private Function EquivalenciaQNA( _
-    ByVal encabezado As String) As String
+Private Function CrearMapaEncabezadosHoja( _
+    ByVal ws As Worksheet) As Object
 
 
-    Select Case encabezado
+    Dim mapa As Object
 
+    Dim f As Long
 
-        Case "RFC"
+    Dim c As Long
 
-            EquivalenciaQNA = "RFC"
+    Dim encabezado As String
 
 
-        Case "HOM"
+    Set mapa = _
+        CreateObject( _
+            "Scripting.Dictionary")
 
-            EquivalenciaQNA = "HOM"
 
+    mapa.CompareMode = vbTextCompare
 
-        Case "PATERNO"
 
-            EquivalenciaQNA = "PATERNO"
+    For f = 1 To 20
 
 
-        Case "MATERNO"
+        For c = 1 To 50
 
-            EquivalenciaQNA = "MATERNO"
 
+            encabezado = _
+                NormalizarEncabezado( _
+                    TextoSeguro( _
+                        ws.Cells( _
+                            f, c).Value))
 
-        Case "NOMBRE"
 
-            EquivalenciaQNA = "NOMBRE"
+            If encabezado <> "" Then
 
 
-        Case "CURP"
+                If Not mapa.Exists(encabezado) Then
 
-            EquivalenciaQNA = "CURP"
+                    mapa.Add _
+                        encabezado, _
+                        c
 
+                End If
 
-        Case "QUINCENA"
 
-            EquivalenciaQNA = "QUINCENA"
+            End If
 
 
-        Case "CICLO"
+        Next c
 
-            EquivalenciaQNA = "CICLO"
 
+    Next f
 
-        Case "UR"
 
-            EquivalenciaQNA = "UR"
-
-
-        Case "NIVEL"
-
-            EquivalenciaQNA = "NIVEL"
-
-
-        Case "NUMEMP"
-
-            EquivalenciaQNA = "NUM_EMP"
-
-
-        Case "NUMPLAZA"
-
-            EquivalenciaQNA = "NUM_PLAZA"
-
-
-        Case "ZONAPAGO"
-
-            EquivalenciaQNA = "ZONA_PAGO"
-
-
-        Case "CODIGO"
-
-            EquivalenciaQNA = "CODIGO"
-
-
-        Case "ZE"
-
-            EquivalenciaQNA = "ZE"
-
-
-        Case "AGRUP"
-
-            EquivalenciaQNA = "AGRUP"
-
-
-        Case "CLAS"
-
-            EquivalenciaQNA = "CLAS"
-
-
-        Case "SCLAS"
-
-            EquivalenciaQNA = "SCLAS"
-
-
-        Case "FECHADESDE"
-
-            EquivalenciaQNA = "FECHA_DESDE"
-
-
-        Case "FECHAHASTA"
-
-            EquivalenciaQNA = "FECHA_HASTA"
-
-
-        Case "ACTIVO"
-
-            EquivalenciaQNA = "ACTIVO"
-
-
-        Case Else
-
-            EquivalenciaQNA = ""
-
-
-    End Select
+    Set CrearMapaEncabezadosHoja = mapa
 
 End Function
+
+
+'==========================================================
+' COPIAR SOLO ENCABEZADOS COINCIDENTES
+'==========================================================
+
+Private Sub CopiarCamposCoincidentes( _
+    ByVal wsOrigen As Worksheet, _
+    ByVal wsDestino As Worksheet, _
+    ByVal filaOrigen As Long, _
+    ByVal filaDestino As Long, _
+    ByVal mapaOrigen As Object, _
+    ByVal mapaDestino As Object)
+
+
+    Dim encabezado As Variant
+
+    Dim colOrigen As Long
+
+    Dim colDestino As Long
+
+    Dim valor As Variant
+
+
+    For Each encabezado In mapaOrigen.Keys
+
+
+        '==================================================
+        ' SI EL ENCABEZADO NO EXISTE EN REGISTRAR,
+        ' SE IGNORA.
+        '==================================================
+
+        If mapaDestino.Exists(CStr(encabezado)) Then
+
+
+            colOrigen = _
+                CLng(mapaOrigen(CStr(encabezado)))
+
+
+            colDestino = _
+                CLng(mapaDestino(CStr(encabezado)))
+
+
+            '----------------------------------------------
+            ' NUNCA IMPORTAR ID
+            '----------------------------------------------
+
+            If UCase$(CStr(encabezado)) <> "ID" Then
+
+
+                valor = _
+                    wsOrigen.Cells( _
+                        filaOrigen, _
+                        colOrigen).Value
+
+
+                If Not IsError(valor) Then
+
+
+                    wsDestino.Cells( _
+                        filaDestino, _
+                        colDestino).Value = _
+                        valor
+
+
+                End If
+
+
+            End If
+
+
+        End If
+
+
+    Next encabezado
+
+End Sub
 
 
 '==========================================================
 ' BUSCAR REGISTRO EN ACCESS
 '
-' RFC = criterio principal
+' RFC PRINCIPAL
+' CURP COMO SEGUNDO CRITERIO
 '
-' CURP / nombre / apellidos = apoyo
+' IMPORTANTE:
+' Se utiliza la conexion existente del proyecto.
 '==========================================================
 
 Private Function BuscarRegistroAccess( _
     ByVal rfc As String, _
     ByVal curp As String, _
-    ByVal nombre As String, _
-    ByVal paterno As String, _
-    ByVal materno As String, _
-    ByRef qnaAnterior As Long, _
-    ByRef cicloAnterior As Long) As Boolean
+    ByRef qnaAccess As Long, _
+    ByRef cicloAccess As Long) As Boolean
 
 
     Dim cn As Object
 
     Dim rs As Object
 
-
     Dim sql As String
 
-    Dim criterio As String
 
+    qnaAccess = 0
 
-    qnaAnterior = 0
-
-    cicloAnterior = 0
+    cicloAccess = 0
 
 
     On Error GoTo ErrorHandler
 
 
-    Set cn = _
-        AbrirConexionAccess()
+    Set cn = AbrirConexionAccess()
 
 
     If cn Is Nothing Then
 
         Err.Raise _
-            vbObjectError + 1100, _
+            vbObjectError + 3000, _
             "BuscarRegistroAccess", _
             "No se pudo abrir la conexion con Access."
 
@@ -995,27 +880,23 @@ Private Function BuscarRegistroAccess( _
     If rfc <> "" Then
 
 
-        criterio = _
-            "[RFC]='" & _
-            Replace( _
-                rfc, _
-                "'", _
-                "''") & "'"
+        sql = _
+            "SELECT * FROM MOVIMIENTOS " & _
+            "WHERE RFC='" & _
+            Replace(rfc, "'", "''") & "'"
 
 
     '======================================================
-    ' SI NO HAY RFC, CURP
+    ' CURP
     '======================================================
 
     ElseIf curp <> "" Then
 
 
-        criterio = _
-            "[CURP]='" & _
-            Replace( _
-                curp, _
-                "'", _
-                "''") & "'"
+        sql = _
+            "SELECT * FROM MOVIMIENTOS " & _
+            "WHERE CURP='" & _
+            Replace(curp, "'", "''") & "'"
 
 
     Else
@@ -1025,17 +906,7 @@ Private Function BuscarRegistroAccess( _
     End If
 
 
-    sql = _
-        "SELECT [QNA],[AÑO] " & _
-        "FROM [" & _
-        TABLA_ACCESS & _
-        "] " & _
-        "WHERE " & _
-        criterio
-
-
-    Set rs = _
-        cn.Execute(sql)
+    Set rs = cn.Execute(sql)
 
 
     If rs.EOF Then
@@ -1051,7 +922,10 @@ Private Function BuscarRegistroAccess( _
 
 
     '======================================================
-    ' TOMAR EL QNA MAS RECIENTE EN ACCESS
+    ' OBTENER ULTIMO QNA/AÑO EXISTENTE
+    '
+    ' ESTO SOLO ES PARA COMPARAR RECENCIA.
+    ' NO ES UNA EQUIVALENCIA DE IMPORTACION.
     '======================================================
 
     Do While Not rs.EOF
@@ -1062,26 +936,27 @@ Private Function BuscarRegistroAccess( _
         Dim a As Long
 
 
-        q = _
-            NumeroSeguro( _
-                rs.Fields("QNA").Value)
+        q = ObtenerNumeroRecordset( _
+                rs, _
+                "QNA")
 
 
-        a = _
-            NumeroSeguro( _
-                rs.Fields("AÑO").Value)
+        a = ObtenerNumeroRecordset( _
+                rs, _
+                "AÑO")
 
 
-        If QNAEsMasReciente( _
+        If QNAExternaEsMasReciente( _
                 a, _
                 q, _
-                cicloAnterior, _
-                qnaAnterior) Then
+                cicloAccess, _
+                qnaAccess) Then
 
 
-            cicloAnterior = a
+            cicloAccess = a
 
-            qnaAnterior = q
+            qnaAccess = q
+
 
         End If
 
@@ -1116,313 +991,91 @@ End Function
 
 
 '==========================================================
-' COMPARAR QNA
+' COMPARAR RECENCIA
 '
-' Primero CICLO.
-' Después QUINCENA.
+' SOLO COMPARA:
+'
+' CICLO
+' QUINCENA
+'
+' NO COPIA ESOS CAMPOS.
 '==========================================================
 
-Private Function QNAEsMasReciente( _
-    ByVal cicloNuevo As Long, _
-    ByVal qnaNueva As Long, _
-    ByVal cicloAnterior As Long, _
-    ByVal qnaAnterior As Long) As Boolean
+Private Function QNAExternaEsMasReciente( _
+    ByVal cicloExterno As Long, _
+    ByVal qnaExterna As Long, _
+    ByVal cicloAccess As Long, _
+    ByVal qnaAccess As Long) As Boolean
 
 
-    If cicloNuevo > cicloAnterior Then
+    If cicloExterno > cicloAccess Then
 
-
-        QNAEsMasReciente = True
+        QNAExternaEsMasReciente = True
 
         Exit Function
-
 
     End If
 
 
-    If cicloNuevo < cicloAnterior Then
+    If cicloExterno < cicloAccess Then
 
-
-        QNAEsMasReciente = False
+        QNAExternaEsMasReciente = False
 
         Exit Function
-
 
     End If
 
 
-    '======================================================
-    ' MISMO CICLO
-    '======================================================
+    If qnaExterna > qnaAccess Then
 
-    If qnaNueva > qnaAnterior Then
-
-        QNAEsMasReciente = True
+        QNAExternaEsMasReciente = True
 
     Else
 
-        QNAEsMasReciente = False
+        QNAExternaEsMasReciente = False
 
     End If
 
 End Function
-
-
-'==========================================================
-' COPIAR REGISTRO A REGISTRAR
-'==========================================================
-
-Private Sub CopiarRegistroQNA( _
-    ByVal wsOrigen As Worksheet, _
-    ByVal wsDestino As Worksheet, _
-    ByVal filaOrigen As Long, _
-    ByVal filaDestino As Long, _
-    ByVal mapa As Object)
-
-
-    Dim campo As Variant
-
-    Dim colOrigen As Long
-
-    Dim colDestino As Long
-
-    Dim valor As Variant
-
-
-    For Each campo In mapa.Keys
-
-
-        '==================================================
-        ' SOLO CAMPOS QUE NOS INTERESAN
-        '==================================================
-
-        Select Case CStr(campo)
-
-
-            Case "RFC"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "RFC")
-
-
-            Case "HOM"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "HOM")
-
-
-            Case "PATERNO"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "PATERNO")
-
-
-            Case "MATERNO"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "MATERNO")
-
-
-            Case "NOMBRE"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "NOMBRE")
-
-
-            Case "CURP"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "CURP")
-
-
-            Case "UR"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "UR")
-
-
-            Case "NIVEL"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "NIVEL")
-
-
-            Case "QUINCENA"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "QNA")
-
-
-            Case "CICLO"
-
-                colDestino = _
-                    BuscarColumnaDestino( _
-                        wsDestino, _
-                        "AÑO")
-
-
-            Case Else
-
-                colDestino = 0
-
-
-        End Select
-
-
-        If colDestino > 0 Then
-
-
-            colOrigen = _
-                CLng(mapa(campo))
-
-
-            valor = _
-                wsOrigen.Cells( _
-                    filaOrigen, _
-                    colOrigen).Value
-
-
-            If Not IsError(valor) Then
-
-
-                wsDestino.Cells( _
-                    filaDestino, _
-                    colDestino).Value = _
-                    valor
-
-
-            End If
-
-
-        End If
-
-
-    Next campo
-
-
-    '======================================================
-    ' RFC_COMPLETO
-    '
-    ' NO SE COPIA DESDE QNA.
-    ' SE MANTIENE LA FORMULA DE REGISTRAR.
-    '======================================================
-
-    EscribirFormulaRFCCompleto _
-        wsDestino, _
-        filaDestino
-
-
-End Sub
-
-
-'==========================================================
-' BUSCAR COLUMNA DESTINO
-'==========================================================
-
-Private Function BuscarColumnaDestino( _
-    ByVal ws As Worksheet, _
-    ByVal campo As String) As Long
-
-
-    Dim fila As Long
-
-    Dim col As Long
-
-    Dim texto As String
-
-
-    For fila = 1 To 20
-
-
-        For col = 1 To 50
-
-
-            texto = _
-                NormalizarTexto( _
-                    TextoSeguro( _
-                        ws.Cells( _
-                            fila, _
-                            col).Value))
-
-
-            If texto = _
-                NormalizarTexto(campo) Then
-
-
-                BuscarColumnaDestino = col
-
-                Exit Function
-
-
-            End If
-
-
-        Next col
-
-
-    Next fila
-
-
-    BuscarColumnaDestino = 0
-
-End Function
-
-
-'==========================================================
-' FORMULA RFC COMPLETO
-'==========================================================
-
-Private Sub EscribirFormulaRFCCompleto( _
-    ByVal ws As Worksheet, _
-    ByVal fila As Long)
-
-
-    On Error Resume Next
-
-
-    ws.Cells( _
-        fila, _
-        2).FormulaLocal = _
-        "=SI(O(A" & fila & _
-        "="""";C" & fila & _
-        "="""");"""";A" & fila & _
-        "&C" & fila & ")"
-
-
-End Sub
 
 
 '==========================================================
 ' PRIMERA FILA LIBRE
+'
+' BUSCA LA PRIMERA FILA SIN RFC.
 '==========================================================
 
 Private Function PrimeraFilaLibre( _
-    ByVal ws As Worksheet) As Long
+    ByVal ws As Worksheet, _
+    ByVal mapaDestino As Object) As Long
 
 
     Dim fila As Long
 
+    Dim columnaRFC As Long
 
-    fila = _
-        FILA_INICIO_REGISTRAR
+
+    If Not mapaDestino.Exists("RFC") Then
+
+        MsgBox _
+            "No se encontro el encabezado RFC " & _
+            "en la hoja REGISTRAR.", _
+            vbCritical, _
+            "IMPORTAR"
+
+
+        PrimeraFilaLibre = 0
+
+        Exit Function
+
+    End If
+
+
+    columnaRFC = _
+        CLng(mapaDestino("RFC"))
+
+
+    fila = 1
 
 
     Do While _
@@ -1430,7 +1083,7 @@ Private Function PrimeraFilaLibre( _
             TextoSeguro( _
                 ws.Cells( _
                     fila, _
-                    1).Value)) <> ""
+                    columnaRFC).Value)) <> ""
 
 
         fila = fila + 1
@@ -1438,9 +1091,9 @@ Private Function PrimeraFilaLibre( _
 
         If fila > 5000 Then
 
-
             MsgBox _
-                "No hay espacio disponible en REGISTRAR.", _
+                "No se encontro espacio libre " & _
+                "en REGISTRAR.", _
                 vbExclamation, _
                 "IMPORTAR"
 
@@ -1448,7 +1101,6 @@ Private Function PrimeraFilaLibre( _
             PrimeraFilaLibre = 0
 
             Exit Function
-
 
         End If
 
@@ -1462,87 +1114,182 @@ End Function
 
 
 '==========================================================
-' NUMERO SEGURO
+' OBTENER VALOR DE UN CAMPO
 '==========================================================
 
-Private Function NumeroSeguro( _
-    ByVal valor As Variant) As Long
+Private Function ObtenerValorCampo( _
+    ByVal ws As Worksheet, _
+    ByVal fila As Long, _
+    ByVal mapa As Object, _
+    ByVal encabezado As String) As String
 
 
-    On Error GoTo ErrorNumero
+    If Not mapa.Exists( _
+        NormalizarEncabezado(encabezado)) Then
 
 
-    If IsNull(valor) Or _
-       IsError(valor) Then
-
-
-        NumeroSeguro = 0
+        ObtenerValorCampo = ""
 
         Exit Function
-
 
     End If
 
 
-    If Trim$(CStr(valor)) = "" Then
-
-
-        NumeroSeguro = 0
-
-        Exit Function
-
-
-    End If
-
-
-    NumeroSeguro = _
-        CLng(Val(CStr(valor)))
-
-
-    Exit Function
-
-
-ErrorNumero:
-
-    NumeroSeguro = 0
+    ObtenerValorCampo = _
+        TextoSeguro( _
+            ws.Cells( _
+                fila, _
+                CLng( _
+                    mapa( _
+                        NormalizarEncabezado( _
+                            encabezado)))).Value)
 
 End Function
 
 
 '==========================================================
-' NORMALIZAR ENCABEZADOS
+' OBTENER NUMERO DE CAMPO
 '==========================================================
 
-Private Function NormalizarTexto( _
+Private Function ObtenerNumeroCampo( _
+    ByVal ws As Worksheet, _
+    ByVal fila As Long, _
+    ByVal mapa As Object, _
+    ByVal encabezado As String) As Long
+
+
+    Dim texto As String
+
+
+    texto = _
+        ObtenerValorCampo( _
+            ws, _
+            fila, _
+            mapa, _
+            encabezado)
+
+
+    If texto = "" Then
+
+        ObtenerNumeroCampo = 0
+
+        Exit Function
+
+    End If
+
+
+    If IsNumeric(texto) Then
+
+        ObtenerNumeroCampo = _
+            CLng(texto)
+
+    Else
+
+        ObtenerNumeroCampo = _
+            CLng(Val(texto))
+
+    End If
+
+End Function
+
+
+'==========================================================
+' OBTENER NUMERO DESDE RECORDSET
+'==========================================================
+
+Private Function ObtenerNumeroRecordset( _
+    ByVal rs As Object, _
+    ByVal campo As String) As Long
+
+
+    On Error GoTo Salir
+
+
+    If IsNull( _
+        rs.Fields(campo).Value) Then
+
+        ObtenerNumeroRecordset = 0
+
+    Else
+
+        ObtenerNumeroRecordset = _
+            CLng( _
+                Val( _
+                    CStr( _
+                        rs.Fields(campo).Value)))
+
+    End If
+
+
+    Exit Function
+
+
+Salir:
+
+    ObtenerNumeroRecordset = 0
+
+End Function
+
+
+'==========================================================
+' OBTENER DIMENSIONES
+'==========================================================
+
+Private Sub ObtenerDimensiones( _
+    ByVal ws As Worksheet, _
+    ByRef ultimaFila As Long, _
+    ByRef ultimaColumna As Long)
+
+
+    Dim ultimaCelda As Range
+
+
+    ultimaFila = 0
+
+    ultimaColumna = 0
+
+
+    On Error Resume Next
+
+
+    Set ultimaCelda = _
+        ws.Cells.SpecialCells( _
+            xlCellTypeLastCell)
+
+
+    On Error GoTo 0
+
+
+    If ultimaCelda Is Nothing Then Exit Sub
+
+
+    ultimaFila = ultimaCelda.Row
+
+    ultimaColumna = ultimaCelda.Column
+
+End Sub
+
+
+'==========================================================
+' NORMALIZAR ENCABEZADO
+'
+' NO CREA EQUIVALENCIAS.
+'
+' Solo elimina diferencias irrelevantes:
+' mayusculas/minusculas y espacios extremos.
+'
+'==========================================================
+
+Private Function NormalizarEncabezado( _
     ByVal texto As String) As String
 
 
-    texto = UCase$( _
-        Trim$(texto))
+    texto = Trim$(texto)
+
+    texto = UCase$(texto)
 
 
-    texto = Replace(texto, "Á", "A")
-    texto = Replace(texto, "É", "E")
-    texto = Replace(texto, "Í", "I")
-    texto = Replace(texto, "Ó", "O")
-    texto = Replace(texto, "Ú", "U")
-    texto = Replace(texto, "Ü", "U")
-    texto = Replace(texto, "Ñ", "N")
-
-
-    texto = Replace(texto, " ", "")
-    texto = Replace(texto, ".", "")
-    texto = Replace(texto, "-", "")
-    texto = Replace(texto, "_", "")
-    texto = Replace(texto, "/", "")
-    texto = Replace(texto, "\", "")
-    texto = Replace(texto, "(", "")
-    texto = Replace(texto, ")", "")
-    texto = Replace(texto, ":", "")
-    texto = Replace(texto, "'", "")
-
-
-    NormalizarTexto = texto
+    NormalizarEncabezado = texto
 
 End Function
 
@@ -1557,23 +1304,19 @@ Private Function TextoSeguro( _
 
     If IsError(valor) Then
 
-
         TextoSeguro = ""
 
 
     ElseIf IsNull(valor) Then
-
 
         TextoSeguro = ""
 
 
     Else
 
-
         TextoSeguro = _
             Trim$( _
                 CStr(valor))
-
 
     End If
 
