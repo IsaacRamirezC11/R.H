@@ -1,0 +1,101 @@
+Option Explicit
+
+'========================================================
+' OBTENER RUTA DE ACCESS
+'========================================================
+
+Public Function ObtenerRutaAccess() As String
+
+    Dim ruta As String
+
+    ruta = ThisWorkbook.Path & "\..\database\AhorroSolidario_DEV.accdb"
+
+    If Dir(ruta) = "" Then
+
+        MsgBox "NO SE ENCONTRÓ LA BASE DE DATOS." & vbCrLf & vbCrLf & _
+               "Se buscó en:" & vbCrLf & _
+               ruta, _
+               vbCritical, "ERROR DE CONEXIÓN"
+
+        ObtenerRutaAccess = ""
+        Exit Function
+
+    End If
+
+    ObtenerRutaAccess = ruta
+
+End Function
+
+
+'========================================================
+' ABRIR CONEXIÓN A ACCESS
+'========================================================
+
+Public Function AbrirConexionAccess() As Object
+
+    Dim cn As Object
+    Dim ruta As String
+
+    On Error GoTo ErrorHandler
+
+    ruta = ObtenerRutaAccess()
+
+    If ruta = "" Then
+        Set AbrirConexionAccess = Nothing
+        Exit Function
+    End If
+
+    Set cn = CreateObject("ADODB.Connection")
+
+    cn.Open "Provider=Microsoft.ACE.OLEDB.12.0;" & _
+            "Data Source=" & ruta & ";" & _
+            "Persist Security Info=False;"
+
+    Set AbrirConexionAccess = cn
+
+    Exit Function
+
+ErrorHandler:
+
+    MsgBox "NO SE PUDO CONECTAR CON ACCESS." & vbCrLf & vbCrLf & _
+           "Error " & Err.Number & ":" & vbCrLf & _
+           Err.Description, _
+           vbCritical, "ERROR ADO"
+
+    Set AbrirConexionAccess = Nothing
+
+End Function
+
+
+'========================================================
+' PROBAR CONEXIÓN
+'========================================================
+
+Public Sub ProbarConexionAccess()
+
+    Dim cn As Object
+
+    On Error GoTo ErrorHandler
+
+    Set cn = AbrirConexionAccess()
+
+    If cn Is Nothing Then Exit Sub
+
+    MsgBox "CONEXIÓN CORRECTA" & vbCrLf & vbCrLf & _
+           "Excel se conectó correctamente con Access.", _
+           vbInformation, "AHORRO SOLIDARIO"
+
+    cn.Close
+    Set cn = Nothing
+
+    Exit Sub
+
+ErrorHandler:
+
+    MsgBox "NO SE PUDO PROBAR LA CONEXIÓN." & vbCrLf & vbCrLf & _
+           "Error " & Err.Number & ":" & vbCrLf & _
+           Err.Description, _
+           vbCritical, "ERROR"
+
+End Sub
+
