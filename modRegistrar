@@ -1,0 +1,629 @@
+Option Explicit
+
+'========================================================
+' REGISTRAR NUEVO REGISTRO
+'========================================================
+
+Public Sub RegistrarNuevoRegistro()
+
+    Dim ws As Worksheet
+    Dim cn As Object
+    Dim rsSchema As Object
+
+    Dim fila As Long
+    Dim ultimaColumna As Long
+
+    Dim sql As String
+    Dim campos As String
+    Dim valores As String
+
+    Dim i As Long
+    Dim nombreCampo As String
+    Dim valor As Variant
+
+    Dim camposAccess As Object
+    Dim camposNoEncontrados As String
+
+    Dim rfcRegistrado As String
+    Dim nombreReviso As String
+
+    On Error GoTo ErrorHandler
+
+    Set ws = ThisWorkbook.Worksheets("REGISTRAR")
+
+    '====================================================
+    ' FILA QUE SE VA A REGISTRAR
+    '====================================================
+
+    fila = ActiveCell.Row
+
+    If fila < 9 Then
+
+        MsgBox _
+            "SELECCIONA UNA CELDA DE LA FILA QUE QUIERES REGISTRAR.", _
+            vbExclamation, _
+            "REGISTRAR"
+
+        Exit Sub
+
+    End If
+
+    '====================================================
+    ' TOTAL DE CAMPOS
+    '====================================================
+
+    ultimaColumna = 38
+
+    '====================================================
+    ' RFC OBLIGATORIO
+    '====================================================
+
+    If Trim(CStr(ws.Cells(fila, 1).Value)) = "" Then
+
+        MsgBox _
+            "EL RFC ES OBLIGATORIO." & vbCrLf & vbCrLf & _
+            "CAPTURA EL RFC ANTES DE REGISTRAR.", _
+            vbExclamation, _
+            "REGISTRAR"
+
+        ws.Cells(fila, 1).Select
+
+        Exit Sub
+
+    End If
+
+    '====================================================
+    ' GUARDAR RFC PARA EL MENSAJE
+    '====================================================
+
+    rfcRegistrado = CStr(ws.Cells(fila, 1).Value)
+
+    '====================================================
+    ' GUARDAR REVISO ANTES DE LIMPIAR
+    '
+    ' REVISO = AJ = columna 36
+    '====================================================
+
+    nombreReviso = Trim( _
+        UCase(CStr(ws.Cells(fila, 36).Value)) _
+    )
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+    '====================================================
+    ' CONVERTIR TEXTOS A MAYÚSCULAS
+    '====================================================
+
+    For i = 1 To ultimaColumna
+
+        If Not IsError(ws.Cells(fila, i).Value) Then
+
+            If VarType(ws.Cells(fila, i).Value) = vbString Then
+
+                ws.Cells(fila, i).Value = _
+                    UCase(Trim(CStr(ws.Cells(fila, i).Value)))
+
+            End If
+
+        End If
+
+    Next i
+
+    '====================================================
+    ' CONECTAR CON ACCESS
+    '====================================================
+
+    Set cn = AbrirConexionAccess()
+
+    If cn Is Nothing Then
+
+        MsgBox _
+            "NO SE PUDO ESTABLECER LA CONEXIÓN CON ACCESS.", _
+            vbCritical, _
+            "ERROR DE CONEXIÓN"
+
+        GoTo Salir
+
+    End If
+
+    '====================================================
+    ' OBTENER CAMPOS REALES DE ACCESS
+    '====================================================
+
+    Set camposAccess = CreateObject("Scripting.Dictionary")
+
+    camposAccess.CompareMode = 1
+
+    Set rsSchema = cn.Execute( _
+        "SELECT TOP 1 * FROM [AHORRO_SOLIDARIO]")
+
+    For i = 0 To rsSchema.Fields.Count - 1
+
+        camposAccess( _
+            rsSchema.Fields(i).Name _
+        ) = True
+
+    Next i
+
+    rsSchema.Close
+
+    Set rsSchema = Nothing
+
+    '====================================================
+    ' CONSTRUIR INSERT
+    '====================================================
+
+    campos = ""
+    valores = ""
+    camposNoEncontrados = ""
+
+    For i = 1 To ultimaColumna
+
+        nombreCampo = Trim( _
+            CStr(ws.Cells(8, i).Value) _
+        )
+
+        If nombreCampo <> "" Then
+
+            If camposAccess.Exists(nombreCampo) Then
+
+                '----------------------------------------
+                ' CAMPO
+                '----------------------------------------
+
+                If campos <> "" Then
+                    campos = campos & ", "
+                End If
+
+                campos = campos & "[" & nombreCampo & "]"
+
+                '----------------------------------------
+                ' VALOR
+                '----------------------------------------
+
+                If valores <> "" Then
+                    valores = valores & ", "
+                End If
+
+                valor = ws.Cells(fila, i).Value
+
+                valores = valores & _
+                    ConvertirValorSQL(valor)
+
+            Else
+
+                '----------------------------------------
+                ' CAMPO NO ENCONTRADO
+                '----------------------------------------
+
+                If camposNoEncontrados <> "" Then
+                    camposNoEncontrados = _
+                        camposNoEncontrados & vbCrLf
+                End If
+
+                camposNoEncontrados = _
+                    camposNoEncontrados & _
+                    "• " & nombreCampo
+
+            End If
+
+        End If
+
+    Next i
+
+    '====================================================
+    ' CAMPOS DESCONOCIDOS
+    '====================================================
+
+    If camposNoEncontrados <> "" Then
+
+        MsgBox _
+            "NO SE PUEDE REGISTRAR TODAVÍA." & _
+            vbCrLf & vbCrLf & _
+            "ESTOS CAMPOS DE EXCEL NO COINCIDEN CON ACCESS:" & _
+            vbCrLf & vbCrLf & _
+            camposNoEncontrados, _
+            vbCritical, _
+            "CAMPOS NO ENCONTRADOS"
+
+        GoTo Salir
+
+    End If
+
+    '====================================================
+    ' CREAR SQL
+    '====================================================
+
+    sql = _
+        "INSERT INTO [AHORRO_SOLIDARIO] (" & _
+        campos & _
+        ") VALUES (" & _
+        valores & _
+        ")"
+
+    '====================================================
+    ' GUARDAR EN ACCESS
+    '====================================================
+
+    cn.Execute sql
+
+    '====================================================
+    ' CERRAR CONEXIÓN
+    '====================================================
+
+    cn.Close
+
+    Set cn = Nothing
+
+    '====================================================
+    ' AGREGAR NUEVO REVISO AL DESPLEGABLE
+    '====================================================
+
+    If nombreReviso <> "" Then
+
+        ActualizarListaReviso nombreReviso
+
+    End If
+
+    '====================================================
+    ' LIMPIAR TODA LA FILA
+    '====================================================
+
+    ws.Range( _
+        ws.Cells(fila, 1), _
+        ws.Cells(fila, ultimaColumna) _
+    ).ClearContents
+
+    '====================================================
+    ' RESTAURAR RFC_COMPLETO
+    '
+    ' B = RFC_COMPLETO
+    '
+    ' LA CELDA QUEDA VISUALMENTE VACÍA
+    ' PERO LA FÓRMULA PERMANECE.
+    '====================================================
+
+    ws.Cells(fila, 2).formula = _
+        "=IF(OR(A" & fila & "="""",C" & fila & _
+        "=""""),"""",A" & fila & "&C" & fila & ")"
+
+    '====================================================
+    ' RESTAURAR FECHA_APLICAR_AHORRO
+    '
+    ' Q = columna 17
+    ' P = columna 16
+    '====================================================
+
+    ws.Cells(fila, 17).formula = _
+        "=IF(P" & fila & "="""","""",P" & fila & "+90)"
+
+    ws.Cells(fila, 17).NumberFormat = "dd/mm/yyyy"
+
+    '====================================================
+    ' RESTAURAR FECHA_HOY
+    '
+    ' R = columna 18
+    '====================================================
+
+    ws.Cells(fila, 18).formula = "=TODAY()"
+
+    ws.Cells(fila, 18).NumberFormat = "dd/mm/yyyy"
+
+    '====================================================
+    ' QNA
+    '
+    ' M = columna 13
+    '====================================================
+
+    ws.Cells(fila, 13).NumberFormat = "00"
+
+    '====================================================
+    ' REGRESAR AL RFC
+    '====================================================
+
+    ws.Cells(fila, 1).Select
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    '====================================================
+    ' CONFIRMACIÓN
+    '====================================================
+
+    MsgBox _
+        "REGISTRO GUARDADO CORRECTAMENTE." & vbCrLf & vbCrLf & _
+        "RFC: " & rfcRegistrado & vbCrLf & vbCrLf & _
+        "LA FILA FUE LIMPIADA Y QUEDÓ LISTA PARA UN NUEVO REGISTRO.", _
+        vbInformation, _
+        "AHORRO SOLIDARIO"
+
+    Exit Sub
+
+
+'========================================================
+' SALIDA
+'========================================================
+
+Salir:
+
+    On Error Resume Next
+
+    If Not rsSchema Is Nothing Then
+
+        If rsSchema.State <> 0 Then
+            rsSchema.Close
+        End If
+
+    End If
+
+    If Not cn Is Nothing Then
+
+        If cn.State <> 0 Then
+            cn.Close
+        End If
+
+    End If
+
+    Set rsSchema = Nothing
+    Set cn = Nothing
+    Set camposAccess = Nothing
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    Exit Sub
+
+
+'========================================================
+' ERROR
+'========================================================
+
+ErrorHandler:
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "NO SE PUDO REGISTRAR EL REGISTRO." & vbCrLf & vbCrLf & _
+        "ERROR " & Err.Number & ":" & vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "ERROR AL REGISTRAR"
+
+    Resume Salir
+
+End Sub
+
+
+'========================================================
+' ACTUALIZAR LISTA DE REVISO
+'
+' AGREGA AUTOMÁTICAMENTE UN NOMBRE NUEVO
+' AL DESPLEGABLE EXISTENTE.
+'========================================================
+
+Private Sub ActualizarListaReviso( _
+    ByVal nombreNuevo As String)
+
+    Dim ws As Worksheet
+    Dim celda As Range
+
+    Dim formulaActual As String
+    Dim listaActual As String
+    Dim nuevaLista As String
+
+    Dim nombres As Variant
+
+    Dim i As Long
+    Dim existe As Boolean
+
+    On Error GoTo Salir
+
+    nombreNuevo = _
+        Trim(UCase(nombreNuevo))
+
+    If nombreNuevo = "" Then Exit Sub
+
+    Set ws = _
+        ThisWorkbook.Worksheets("REGISTRAR")
+
+    '====================================================
+    ' REVISO = AJ
+    '====================================================
+
+    Set celda = ws.Range("AJ9")
+
+    On Error Resume Next
+
+    If celda.Validation.Type <> xlValidateList Then
+
+        On Error GoTo 0
+
+        Exit Sub
+
+    End If
+
+    formulaActual = _
+        celda.Validation.Formula1
+
+    On Error GoTo Salir
+
+    '====================================================
+    ' OBTENER LISTA ACTUAL
+    '====================================================
+
+    If Left(formulaActual, 1) = "=" Then
+
+        Exit Sub
+
+    End If
+
+    listaActual = formulaActual
+
+    '====================================================
+    ' SEPARAR NOMBRES
+    '====================================================
+
+    nombres = Split( _
+        listaActual, _
+        "," _
+    )
+
+    '====================================================
+    ' COMPROBAR SI YA EXISTE
+    '====================================================
+
+    For i = LBound(nombres) To UBound(nombres)
+
+        If Trim(UCase( _
+            CStr(nombres(i)) _
+        )) = nombreNuevo Then
+
+            existe = True
+
+            Exit For
+
+        End If
+
+    Next i
+
+    If existe Then Exit Sub
+
+    '====================================================
+    ' AGREGAR NOMBRE
+    '====================================================
+
+    nuevaLista = _
+        listaActual & "," & nombreNuevo
+
+    '====================================================
+    ' ACTUALIZAR DESPLEGABLE
+    '====================================================
+
+    For Each celda In _
+        ws.Range("AJ9:AJ5000")
+
+        With celda.Validation
+        
+            .Delete
+        
+            .Add _
+                Type:=xlValidateList, _
+                AlertStyle:=xlValidAlertStop, _
+                Operator:=xlBetween, _
+                Formula1:=nuevaLista
+        
+            .IgnoreBlank = True
+            .InCellDropdown = True
+            .ShowInput = True
+        
+            'IMPORTANTE:
+            'PERMITE ESCRIBIR UN NOMBRE QUE
+            'TODAVÍA NO ESTÁ EN LA LISTA
+            .ShowError = False
+        
+        End With
+
+    Next celda
+
+Salir:
+
+End Sub
+
+
+'========================================================
+' CONVERTIR VALORES DE EXCEL A SQL
+'========================================================
+
+Private Function ConvertirValorSQL( _
+    ByVal valor As Variant) As String
+
+    '----------------------------------------------------
+    ' ERROR
+    '----------------------------------------------------
+
+    If IsError(valor) Then
+
+        ConvertirValorSQL = "NULL"
+
+        Exit Function
+
+    End If
+
+    '----------------------------------------------------
+    ' VACÍO
+    '----------------------------------------------------
+
+    If IsEmpty(valor) Then
+
+        ConvertirValorSQL = "NULL"
+
+        Exit Function
+
+    End If
+
+    '----------------------------------------------------
+    ' TEXTO VACÍO
+    '----------------------------------------------------
+
+    If Trim(CStr(valor)) = "" Then
+
+        ConvertirValorSQL = "NULL"
+
+        Exit Function
+
+    End If
+
+    '----------------------------------------------------
+    ' FECHA
+    '----------------------------------------------------
+
+    If IsDate(valor) Then
+
+        ConvertirValorSQL = _
+            "#" & _
+            Format( _
+                CDate(valor), _
+                "yyyy\/mm\/dd" _
+            ) & _
+            "#"
+
+        Exit Function
+
+    End If
+
+    '----------------------------------------------------
+    ' NÚMERO
+    '----------------------------------------------------
+
+    If IsNumeric(valor) Then
+
+        ConvertirValorSQL = _
+            Replace( _
+                CStr(valor), _
+                ",", _
+                "." _
+            )
+
+        Exit Function
+
+    End If
+
+    '----------------------------------------------------
+    ' TEXTO
+    '----------------------------------------------------
+
+    ConvertirValorSQL = _
+        "'" & _
+        Replace( _
+            CStr(valor), _
+            "'", _
+            "''" _
+        ) & _
+        "'"
+
+End Function
+
+
+
