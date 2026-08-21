@@ -1,0 +1,1345 @@
+Option Explicit
+
+'==========================================================
+' MODMODIFICAR
+'
+' BASE DE DATOS:
+'   AhorroSolidario_DEV.accdb
+'
+' TABLA:
+'   AHORRO_SOLIDARIO
+'
+' HOJA:
+'   MODIFICAR
+'
+' BUSQUEDA:
+'   E3 = RFC
+'   E4 = RFC_COMPLETO
+'   E5 = CURP
+'
+' RESULTADOS:
+'   Fila 8 = encabezados
+'   Fila 9 = primer registro
+'
+' COLUMNAS CON FORMULA:
+'   B = RFC_COMPLETO
+'   Q = FECHA_APLICAR_AHORRO
+'   R = FECHA_HOY
+'
+' COLUMNA AUXILIAR:
+'   AM = Id de Access
+'
+' BOTONES:
+'   BuscarPorDatos
+'   BuscarPendientes
+'   LimpiarModificar
+'   AplicarModificacion
+'
+'==========================================================
+
+
+Private Const HOJA_MODIFICAR As String = "MODIFICAR"
+
+Private Const TABLA_ACCESS As String = "AHORRO_SOLIDARIO"
+
+Private Const FILA_ENCABEZADOS As Long = 8
+
+Private Const FILA_INICIO As Long = 9
+
+Private Const FILA_MAXIMA As Long = 5000
+
+Private Const COLUMNA_INICIO As Long = 1
+
+Private Const COLUMNA_FIN As Long = 38
+
+Private Const COLUMNA_ID_AUX As Long = 39
+
+
+'==========================================================
+' BUSCAR POR RFC / RFC_COMPLETO / CURP
+'==========================================================
+
+Public Sub BuscarPorDatos()
+
+    Dim ws As Worksheet
+
+    Dim rfc As String
+    Dim rfcCompleto As String
+    Dim curp As String
+
+    Dim cn As Object
+    Dim rs As Object
+
+    Dim sql As String
+    Dim condiciones As String
+
+    Dim cantidad As Long
+
+
+    On Error GoTo ErrorHandler
+
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_MODIFICAR)
+
+
+    '======================================================
+    ' OBTENER DATOS
+    '======================================================
+
+    rfc = UCase$(Trim$(CStr(ws.Range("E3").Value)))
+
+    rfcCompleto = UCase$(Trim$(CStr(ws.Range("E4").Value)))
+
+    curp = UCase$(Trim$(CStr(ws.Range("E5").Value)))
+
+
+    '======================================================
+    ' GUARDAR NORMALIZADOS
+    '======================================================
+
+    ws.Range("E3").Value = rfc
+
+    ws.Range("E4").Value = rfcCompleto
+
+    ws.Range("E5").Value = curp
+
+
+    '======================================================
+    ' VALIDAR
+    '======================================================
+
+    If rfc = "" And _
+       rfcCompleto = "" And _
+       curp = "" Then
+
+        MsgBox _
+            "Ingresa al menos uno de los siguientes datos:" & _
+            vbCrLf & vbCrLf & _
+            "RFC" & vbCrLf & _
+            "RFC_COMPLETO" & vbCrLf & _
+            "CURP", _
+            vbExclamation, _
+            "BUSCAR"
+
+        Exit Sub
+
+    End If
+
+
+    Application.ScreenUpdating = False
+
+    Application.StatusBar = "Buscando registro..."
+
+
+    '======================================================
+    ' LIMPIAR RESULTADOS ANTERIORES
+    '
+    ' LAS FORMULAS SE CONSERVAN.
+    '======================================================
+
+    LimpiarResultadosSinMensaje ws
+
+
+    '======================================================
+    ' CONEXION
+    '======================================================
+
+    Set cn = AbrirConexionAccess()
+
+    If cn Is Nothing Then GoTo Salir
+
+
+    '======================================================
+    ' CREAR CONDICIONES
+    '======================================================
+
+    condiciones = ""
+
+
+    '------------------------------------------------------
+    ' RFC
+    '------------------------------------------------------
+
+    If rfc <> "" Then
+
+        condiciones = _
+            condiciones & _
+            "UCase(Trim(Nz([RFC],'')))='" & _
+            EscaparSQL(rfc) & "'"
+
+    End If
+
+
+    '------------------------------------------------------
+    ' RFC_COMPLETO
+    '
+    ' En Excel:
+    '
+    ' RFC_COMPLETO = RFC + HOM
+    '
+    ' No necesitamos que Access tenga RFC_COMPLETO.
+    '------------------------------------------------------
+
+    If rfcCompleto <> "" Then
+
+        If condiciones <> "" Then
+            condiciones = condiciones & " AND "
+        End If
+
+        condiciones = _
+            condiciones & _
+            "UCase(Trim(Nz([RFC],'')) & " & _
+            "Trim(Nz([HOM],'')))='" & _
+            EscaparSQL(rfcCompleto) & "'"
+
+    End If
+
+
+    '------------------------------------------------------
+    ' CURP
+    '------------------------------------------------------
+
+    If curp <> "" Then
+
+        If condiciones <> "" Then
+            condiciones = condiciones & " AND "
+        End If
+
+        condiciones = _
+            condiciones & _
+            "UCase(Trim(Nz([CURP],'')))='" & _
+            EscaparSQL(curp) & "'"
+
+    End If
+
+
+    '======================================================
+    ' CONSULTA
+    '======================================================
+
+    sql = _
+        "SELECT * FROM [" & _
+        TABLA_ACCESS & "] " & _
+        "WHERE " & _
+        condiciones & _
+        " ORDER BY [AÑO] DESC, [QNA] DESC, [Id] DESC"
+
+
+    '======================================================
+    ' EJECUTAR
+    '======================================================
+
+    Set rs = cn.Execute(sql)
+
+
+    '======================================================
+    ' MOSTRAR RESULTADOS
+    '======================================================
+
+    cantidad = _
+        EscribirResultados( _
+            ws, _
+            rs)
+
+
+    '======================================================
+    ' ACTUALIZAR FORMULAS
+    '======================================================
+
+    If cantidad > 0 Then
+
+        RellenarFormulasModificar _
+            ws, _
+            FILA_INICIO, _
+            FILA_INICIO + cantidad - 1
+
+    End If
+
+
+    Application.Calculate
+
+
+    MsgBox _
+        "BUSQUEDA COMPLETADA." & _
+        vbCrLf & vbCrLf & _
+        "Registros encontrados: " & _
+        cantidad, _
+        vbInformation, _
+        "BUSCAR"
+
+
+Salir:
+
+    On Error Resume Next
+
+    If Not rs Is Nothing Then rs.Close
+
+    If Not cn Is Nothing Then cn.Close
+
+    Application.StatusBar = False
+
+    Application.ScreenUpdating = True
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.StatusBar = False
+
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "ERROR DURANTE LA BUSQUEDA." & _
+        vbCrLf & vbCrLf & _
+        "Numero: " & Err.Number & vbCrLf & _
+        "Descripcion: " & Err.Description, _
+        vbCritical, _
+        "ERROR DE BUSQUEDA"
+
+    Resume Salir
+
+End Sub
+
+
+'==========================================================
+' BUSCAR P / PENDIENTES
+'
+' C_B = P
+'
+' O
+'
+' RESULTADO_ANALISIS = PENDIENTE
+'==========================================================
+
+Public Sub BuscarPendientes()
+
+    Dim ws As Worksheet
+
+    Dim cn As Object
+    Dim rs As Object
+
+    Dim sql As String
+
+    Dim cantidad As Long
+
+
+    On Error GoTo ErrorHandler
+
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_MODIFICAR)
+
+
+    Application.ScreenUpdating = False
+
+    Application.StatusBar = _
+        "Buscando pendientes..."
+
+
+    '======================================================
+    ' LIMPIAR RESULTADOS
+    '======================================================
+
+    LimpiarResultadosSinMensaje ws
+
+
+    '======================================================
+    ' CONEXION
+    '======================================================
+
+    Set cn = AbrirConexionAccess()
+
+    If cn Is Nothing Then GoTo Salir
+
+
+    '======================================================
+    ' CONSULTA
+    '
+    ' C_B = P
+    '
+    ' O
+    '
+    ' RESULTADO_ANALISIS = PENDIENTE
+    '
+    ' No importa mayuscula/minuscula ni espacios.
+    '======================================================
+
+    sql = _
+        "SELECT * FROM [" & _
+        TABLA_ACCESS & "] " & _
+        "WHERE " & _
+        "UCase(Trim(Nz([C_B],'')))='P' " & _
+        "OR " & _
+        "UCase(Trim(Nz([RESULTADO_ANALISIS],'')))='PENDIENTE' " & _
+        "ORDER BY [AÑO] DESC, [QNA] DESC, [Id] DESC"
+
+
+    Set rs = cn.Execute(sql)
+
+
+    '======================================================
+    ' ESCRIBIR
+    '======================================================
+
+    cantidad = _
+        EscribirResultados( _
+            ws, _
+            rs)
+
+
+    '======================================================
+    ' FORMULAS
+    '======================================================
+
+    If cantidad > 0 Then
+
+        RellenarFormulasModificar _
+            ws, _
+            FILA_INICIO, _
+            FILA_INICIO + cantidad - 1
+
+    End If
+
+
+    Application.Calculate
+
+
+    MsgBox _
+        "BUSQUEDA DE P / PENDIENTES COMPLETADA." & _
+        vbCrLf & vbCrLf & _
+        "Registros encontrados: " & _
+        cantidad, _
+        vbInformation, _
+        "P / PENDIENTES"
+
+
+Salir:
+
+    On Error Resume Next
+
+    If Not rs Is Nothing Then rs.Close
+
+    If Not cn Is Nothing Then cn.Close
+
+    Application.StatusBar = False
+
+    Application.ScreenUpdating = True
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.StatusBar = False
+
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "ERROR AL BUSCAR P / PENDIENTES." & _
+        vbCrLf & vbCrLf & _
+        "Numero: " & Err.Number & vbCrLf & _
+        "Descripcion: " & Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+    Resume Salir
+
+End Sub
+
+
+'==========================================================
+' ESCRIBIR RESULTADOS
+'
+' IMPORTANTE:
+'
+' NO ESCRIBE:
+'
+' B = RFC_COMPLETO
+' Q = FECHA_APLICAR_AHORRO
+' R = FECHA_HOY
+'
+' porque esas columnas tienen formulas.
+'
+' Los datos de Access se cargan en las demas columnas.
+'==========================================================
+
+Private Function EscribirResultados( _
+    ByVal ws As Worksheet, _
+    ByVal rs As Object) As Long
+
+
+    Dim fila As Long
+
+    Dim c As Long
+
+    Dim campo As String
+
+    Dim columna As Long
+
+    Dim valor As Variant
+
+    Dim cantidad As Long
+
+
+    fila = FILA_INICIO
+
+
+    If rs.EOF Then
+
+        EscribirResultados = 0
+
+        Exit Function
+
+    End If
+
+
+    Do While Not rs.EOF
+
+
+        If fila > FILA_MAXIMA Then
+
+            MsgBox _
+                "Se alcanzo la fila maxima de resultados: " & _
+                FILA_MAXIMA, _
+                vbExclamation, _
+                "MODIFICAR"
+
+            Exit Do
+
+        End If
+
+
+        '==================================================
+        ' RECORRER CAMPOS DE ACCESS
+        '==================================================
+
+        For c = 0 To rs.Fields.Count - 1
+
+
+            campo = _
+                CStr( _
+                    rs.Fields(c).Name)
+
+
+            If UCase$(campo) <> "ID" Then
+
+
+                '------------------------------------------
+                ' NO SOBRESCRIBIR FORMULAS
+                '------------------------------------------
+
+                If UCase$(campo) <> _
+                   "RFC_COMPLETO" And _
+                   UCase$(campo) <> _
+                   "FECHA_APLICAR_AHORRO" And _
+                   UCase$(campo) <> _
+                   "FECHA_HOY" Then
+
+
+                    columna = _
+                        BuscarColumna( _
+                            ws, _
+                            campo)
+
+
+                    If columna > 0 Then
+
+
+                        If IsNull( _
+                            rs.Fields(c).Value) Then
+
+                            valor = ""
+
+                        Else
+
+                            valor = _
+                                rs.Fields(c).Value
+
+                        End If
+
+
+                        If Not IsError(valor) Then
+
+                            ws.Cells( _
+                                fila, _
+                                columna).Value = _
+                                valor
+
+                        End If
+
+
+                    End If
+
+
+                End If
+
+
+            End If
+
+
+        Next c
+
+
+        '==================================================
+        ' GUARDAR ID DE ACCESS
+        '
+        ' AM = columna 39
+        '==================================================
+
+        On Error Resume Next
+
+        ws.Cells( _
+            fila, _
+            COLUMNA_ID_AUX).Value = _
+            rs.Fields("Id").Value
+
+        On Error GoTo 0
+
+
+        cantidad = cantidad + 1
+
+        fila = fila + 1
+
+
+        rs.MoveNext
+
+
+    Loop
+
+
+    EscribirResultados = cantidad
+
+End Function
+
+
+'==========================================================
+' APLICAR MODIFICACION
+'
+' Usa el Id guardado en AM.
+'
+' Actualiza el registro exacto de Access.
+'
+' RFC_COMPLETO no se manda porque es formula de Excel.
+'
+' FECHA_APLICAR_AHORRO y FECHA_HOY SI se mandan porque
+' son campos existentes en Access.
+'==========================================================
+
+Public Sub AplicarModificacion()
+
+    Dim ws As Worksheet
+
+    Dim fila As Long
+
+    Dim id As Variant
+
+    Dim cn As Object
+
+    Dim sql As String
+
+    Dim listaCampos As String
+
+    Dim c As Long
+
+    Dim campo As String
+
+    Dim valor As Variant
+
+    Dim respuesta As VbMsgBoxResult
+
+
+    On Error GoTo ErrorHandler
+
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_MODIFICAR)
+
+
+    '======================================================
+    ' FILA SELECCIONADA
+    '======================================================
+
+    fila = ActiveCell.Row
+
+
+    If fila < FILA_INICIO Or _
+       fila > FILA_MAXIMA Then
+
+        MsgBox _
+            "Selecciona una celda dentro del registro " & _
+            "que deseas modificar.", _
+            vbExclamation, _
+            "APLICAR MODIFICACION"
+
+        Exit Sub
+
+    End If
+
+
+    '======================================================
+    ' OBTENER ID
+    '======================================================
+
+    id = _
+        ws.Cells( _
+            fila, _
+            COLUMNA_ID_AUX).Value
+
+
+    If Trim$(CStr(id)) = "" Then
+
+        MsgBox _
+            "La fila seleccionada no tiene un Id de Access." & _
+            vbCrLf & vbCrLf & _
+            "Primero realiza una busqueda y selecciona " & _
+            "un registro.", _
+            vbExclamation, _
+            "APLICAR MODIFICACION"
+
+        Exit Sub
+
+    End If
+
+
+    '======================================================
+    ' CONFIRMAR
+    '======================================================
+
+    respuesta = _
+        MsgBox( _
+            "¿Deseas aplicar esta modificacion?" & _
+            vbCrLf & vbCrLf & _
+            "RFC: " & _
+            CStr(ws.Cells(fila, 1).Value) & _
+            vbCrLf & _
+            "NOMBRE: " & _
+            CStr(ws.Cells(fila, 6).Value) & _
+            vbCrLf & vbCrLf & _
+            "El registro se actualizara directamente " & _
+            "en Access.", _
+            vbYesNo + _
+            vbQuestion + _
+            vbDefaultButton2, _
+            "CONFIRMAR MODIFICACION")
+
+
+    If respuesta <> vbYes Then Exit Sub
+
+
+    '======================================================
+    ' CONEXION
+    '======================================================
+
+    Set cn = AbrirConexionAccess()
+
+    If cn Is Nothing Then Exit Sub
+
+
+    '======================================================
+    ' ACTUALIZAR TODOS LOS CAMPOS DE LA FILA
+    '======================================================
+
+    listaCampos = ""
+
+
+    For c = COLUMNA_INICIO To COLUMNA_FIN
+
+
+        campo = _
+            Trim$( _
+                CStr( _
+                    ws.Cells( _
+                        FILA_ENCABEZADOS, _
+                        c).Value))
+
+
+        If campo <> "" Then
+
+
+            '----------------------------------------------
+            ' ID NO SE MODIFICA
+            '----------------------------------------------
+
+            If UCase$(campo) <> "ID" Then
+
+
+                '------------------------------------------
+                ' RFC_COMPLETO ES CALCULADO EN EXCEL
+                '------------------------------------------
+
+                If UCase$(campo) <> _
+                   "RFC_COMPLETO" Then
+
+
+                    If CampoExisteEnAccess( _
+                        cn, _
+                        TABLA_ACCESS, _
+                        campo) Then
+
+
+                        valor = _
+                            ws.Cells( _
+                                fila, _
+                                c).Value
+
+
+                        If listaCampos <> "" Then
+
+                            listaCampos = _
+                                listaCampos & ","
+
+                        End If
+
+
+                        '----------------------------------
+                        ' VALORES NULL
+                        '----------------------------------
+
+                        If Trim$(CStr(valor)) = "" Then
+
+                            listaCampos = _
+                                listaCampos & _
+                                "[" & campo & "]=Null"
+
+
+                        Else
+
+
+                            listaCampos = _
+                                listaCampos & _
+                                "[" & campo & "]='" & _
+                                EscaparSQL( _
+                                    CStr(valor)) & "'"
+
+
+                        End If
+
+
+                    End If
+
+
+                End If
+
+
+            End If
+
+
+        End If
+
+
+    Next c
+
+
+    '======================================================
+    ' VALIDAR
+    '======================================================
+
+    If listaCampos = "" Then
+
+        MsgBox _
+            "No se encontraron campos para actualizar.", _
+            vbExclamation, _
+            "APLICAR MODIFICACION"
+
+        GoTo Salir
+
+    End If
+
+
+    '======================================================
+    ' UPDATE
+    '======================================================
+
+    sql = _
+        "UPDATE [" & _
+        TABLA_ACCESS & "] " & _
+        "SET " & _
+        listaCampos & _
+        " WHERE [Id]=" & _
+        CLng(id)
+
+
+    cn.Execute sql
+
+
+    '======================================================
+    ' ACTUALIZAR FORMULAS DE LA FILA
+    '======================================================
+
+    RellenarFormulasModificar _
+        ws, _
+        fila, _
+        fila
+
+
+    Application.Calculate
+
+
+    MsgBox _
+        "MODIFICACION APLICADA CORRECTAMENTE." & _
+        vbCrLf & vbCrLf & _
+        "El registro fue actualizado en Access.", _
+        vbInformation, _
+        "MODIFICAR"
+
+
+Salir:
+
+    On Error Resume Next
+
+    If Not cn Is Nothing Then cn.Close
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    MsgBox _
+        "ERROR AL APLICAR LA MODIFICACION." & _
+        vbCrLf & vbCrLf & _
+        "Numero: " & Err.Number & _
+        vbCrLf & _
+        "Descripcion: " & Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+    Resume Salir
+
+End Sub
+
+
+'==========================================================
+' LIMPIAR MODIFICAR
+'
+' CONSERVA LAS FORMULAS:
+'
+' B = RFC_COMPLETO
+' Q = FECHA_APLICAR_AHORRO
+' R = FECHA_HOY
+'
+' TAMBIEN CONSERVA:
+' - encabezados
+' - formato
+' - filtros
+' - dropdowns
+'==========================================================
+
+Public Sub LimpiarModificar()
+
+    Dim ws As Worksheet
+
+    Dim respuesta As VbMsgBoxResult
+
+
+    On Error GoTo ErrorHandler
+
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_MODIFICAR)
+
+
+    respuesta = _
+        MsgBox( _
+            "Se limpiaran los registros desde la fila 9." & _
+            vbCrLf & vbCrLf & _
+            "Las formulas de RFC_COMPLETO, " & _
+            "FECHA_APLICAR_AHORRO y FECHA_HOY " & _
+            "se conservaran." & _
+            vbCrLf & vbCrLf & _
+            "¿Deseas continuar?", _
+            vbYesNo + _
+            vbQuestion + _
+            vbDefaultButton2, _
+            "LIMPIAR MODIFICAR")
+
+
+    If respuesta <> vbYes Then Exit Sub
+
+
+    Application.ScreenUpdating = False
+
+
+    LimpiarResultadosSinMensaje ws
+
+
+    Application.Calculate
+
+
+    Application.ScreenUpdating = True
+
+
+    MsgBox _
+        "Los registros fueron limpiados." & _
+        vbCrLf & vbCrLf & _
+        "Las formulas permanecen listas para el siguiente uso.", _
+        vbInformation, _
+        "MODIFICAR"
+
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "ERROR AL LIMPIAR MODIFICAR." & _
+        vbCrLf & vbCrLf & _
+        "Numero: " & Err.Number & _
+        vbCrLf & _
+        "Descripcion: " & Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+End Sub
+
+
+'==========================================================
+' LIMPIAR RESULTADOS SIN BORRAR FORMULAS
+'==========================================================
+
+Private Sub LimpiarResultadosSinMensaje( _
+    ByVal ws As Worksheet)
+
+
+    '======================================================
+    ' A = RFC
+    '======================================================
+
+    ws.Range("A9:A5000").ClearContents
+
+
+    '======================================================
+    ' C:P
+    '======================================================
+
+    ws.Range("C9:P5000").ClearContents
+
+
+    '======================================================
+    ' S:AL
+    '======================================================
+
+    ws.Range("S9:AL5000").ClearContents
+
+
+    '======================================================
+    ' AM = ID AUXILIAR
+    '======================================================
+
+    ws.Range("AM9:AM5000").ClearContents
+
+
+    '======================================================
+    ' B, Q y R NO SE TOCAN
+    '
+    ' Sus formulas permanecen.
+    '======================================================
+
+End Sub
+
+
+'==========================================================
+' PREPARAR FORMULAS DE MODIFICAR
+'
+' Se ejecuta al entrar a la hoja.
+'
+' Las formulas quedan listas desde la fila 9 hasta 5000.
+'==========================================================
+
+Public Sub PrepararFormulasModificar()
+
+    Dim ws As Worksheet
+
+
+    On Error GoTo ErrorHandler
+
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_MODIFICAR)
+
+
+    Application.ScreenUpdating = False
+
+
+    '======================================================
+    ' RFC_COMPLETO
+    '
+    ' B = RFC + HOM
+    '======================================================
+
+    ws.Range("B9").formula = _
+        "=IF(OR(A9="""",C9=""""),"""",A9&C9)"
+
+
+    ws.Range("B9:B5000").FillDown
+
+
+    '======================================================
+    ' FECHA_APLICAR_AHORRO
+    '
+    ' Q = FECHA_SOLICITA + 90
+    '======================================================
+
+    ws.Range("Q9").formula = _
+        "=IF(P9="""","""",P9+90)"
+
+
+    ws.Range("Q9:Q5000").FillDown
+
+
+    '======================================================
+    ' FECHA_HOY
+    '======================================================
+
+    ws.Range("R9").formula = _
+        "=TODAY()"
+
+
+    ws.Range("R9:R5000").FillDown
+
+
+    Application.ScreenUpdating = True
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "ERROR AL PREPARAR LAS FORMULAS." & _
+        vbCrLf & vbCrLf & _
+        "Numero: " & Err.Number & _
+        vbCrLf & _
+        "Descripcion: " & Err.Description, _
+        vbCritical, _
+        "FORMULAS"
+
+End Sub
+
+
+'==========================================================
+' RELLENAR FORMULAS DESPUES DE UNA BUSQUEDA
+'
+' Mantiene las formulas de la fila 9 y las extiende
+' hasta la ultima fila con resultados.
+'==========================================================
+
+Private Sub RellenarFormulasModificar( _
+    ByVal ws As Worksheet, _
+    ByVal filaInicio As Long, _
+    ByVal filaFin As Long)
+
+
+    If filaFin < filaInicio Then Exit Sub
+
+
+    '======================================================
+    ' RFC_COMPLETO
+    '======================================================
+
+    ws.Range("B9:B" & filaFin).FillDown
+
+
+    '======================================================
+    ' FECHA_APLICAR_AHORRO
+    '======================================================
+
+    ws.Range("Q9:Q" & filaFin).FillDown
+
+
+    '======================================================
+    ' FECHA_HOY
+    '======================================================
+
+    ws.Range("R9:R" & filaFin).FillDown
+
+
+End Sub
+
+
+'==========================================================
+' BUSCAR COLUMNA POR ENCABEZADO
+'==========================================================
+
+Private Function BuscarColumna( _
+    ByVal ws As Worksheet, _
+    ByVal nombreCampo As String) As Long
+
+
+    Dim c As Long
+
+    Dim encabezado As String
+
+
+    For c = COLUMNA_INICIO To COLUMNA_FIN
+
+
+        encabezado = _
+            NormalizarTexto( _
+                ws.Cells( _
+                    FILA_ENCABEZADOS, _
+                    c).Value)
+
+
+        If encabezado = _
+           NormalizarTexto(nombreCampo) Then
+
+
+            BuscarColumna = c
+
+            Exit Function
+
+        End If
+
+
+    Next c
+
+
+    BuscarColumna = 0
+
+End Function
+
+
+'==========================================================
+' COMPROBAR SI CAMPO EXISTE EN ACCESS
+'==========================================================
+
+Private Function CampoExisteEnAccess( _
+    ByVal cn As Object, _
+    ByVal tabla As String, _
+    ByVal nombreCampo As String) As Boolean
+
+
+    Dim rs As Object
+
+    Dim sql As String
+
+
+    On Error GoTo NoExiste
+
+
+    sql = _
+        "SELECT TOP 1 [" & _
+        nombreCampo & "] " & _
+        "FROM [" & _
+        tabla & "]"
+
+
+    Set rs = _
+        cn.Execute(sql)
+
+
+    CampoExisteEnAccess = True
+
+
+    rs.Close
+
+    Set rs = Nothing
+
+
+    Exit Function
+
+
+NoExiste:
+
+    CampoExisteEnAccess = False
+
+    On Error Resume Next
+
+    If Not rs Is Nothing Then rs.Close
+
+End Function
+
+
+'==========================================================
+' CONVERTIR BUSQUEDAS A MAYUSCULAS
+'==========================================================
+
+Public Sub ConvertirBusquedasMayusculas()
+
+    Dim ws As Worksheet
+
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_MODIFICAR)
+
+
+    ws.Range("E3").Value = _
+        UCase$( _
+            Trim$( _
+                CStr( _
+                    ws.Range("E3").Value)))
+
+
+    ws.Range("E4").Value = _
+        UCase$( _
+            Trim$( _
+                CStr( _
+                    ws.Range("E4").Value)))
+
+
+    ws.Range("E5").Value = _
+        UCase$( _
+            Trim$( _
+                CStr( _
+                    ws.Range("E5").Value)))
+
+End Sub
+
+
+'==========================================================
+' ESCAPAR APOSTROFES PARA SQL
+'==========================================================
+
+Private Function EscaparSQL( _
+    ByVal texto As String) As String
+
+
+    EscaparSQL = _
+        Replace( _
+            texto, _
+            "'", _
+            "''")
+
+End Function
+
+
+'==========================================================
+' NORMALIZAR TEXTO
+'==========================================================
+
+Private Function NormalizarTexto( _
+    ByVal valor As Variant) As String
+
+
+    If IsError(valor) Then
+
+        NormalizarTexto = ""
+
+    ElseIf IsNull(valor) Then
+
+        NormalizarTexto = ""
+
+    Else
+
+        NormalizarTexto = _
+            UCase$( _
+                Trim$( _
+                    CStr(valor)))
+
+    End If
+
+End Function
+
