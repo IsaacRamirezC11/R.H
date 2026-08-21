@@ -1,0 +1,161 @@
+Option Explicit
+
+Private Const HOJA_REGISTRAR As String = "REGISTRAR"
+
+Private Const FILA_INICIO As Long = 9
+Private Const FILA_FIN As Long = 5000
+
+Private Const COLUMNA_INICIO As Long = 1
+Private Const COLUMNA_FIN As Long = 38
+
+
+'==========================================================
+' LIMPIAR TODOS LOS REGISTROS DE REGISTRAR
+'==========================================================
+
+Public Sub LimpiarRegistros()
+
+    Dim ws As Worksheet
+    Dim formulaRFC As String
+    Dim respuesta As VbMsgBoxResult
+
+    On Error GoTo ErrorHandler
+
+    Set ws = ThisWorkbook.Worksheets(HOJA_REGISTRAR)
+
+    respuesta = MsgBox( _
+        "ESTA ACCION ELIMINARA TODOS LOS REGISTROS " & _
+        "DE REGISTRAR." & vbCrLf & vbCrLf & _
+        "Se limpiaran las filas 9 a 5000." & vbCrLf & vbCrLf & _
+        "Los encabezados, formato y dropdowns " & _
+        "se conservaran." & vbCrLf & vbCrLf & _
+        "¿Deseas continuar?", _
+        vbYesNo + vbQuestion + vbDefaultButton2, _
+        "LIMPIAR REGISTROS")
+
+    If respuesta <> vbYes Then Exit Sub
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+    'Guardar la formula actual de RFC_COMPLETO
+    formulaRFC = ws.Range("B9").formula
+
+    'Limpiar solamente el contenido
+    ws.Range( _
+        ws.Cells(FILA_INICIO, COLUMNA_INICIO), _
+        ws.Cells(FILA_FIN, COLUMNA_FIN) _
+    ).ClearContents
+
+    'Restaurar la formula de RFC_COMPLETO
+    If formulaRFC <> "" Then
+
+        ws.Range("B9").formula = formulaRFC
+        ws.Range("B9:B5000").FillDown
+
+    End If
+
+    'Eliminar marcas de ultima importacion
+    BorrarNombreSeguro "FilaInicioImportacion"
+    BorrarNombreSeguro "FilaFinImportacion"
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "REGISTRAR fue limpiada correctamente." & vbCrLf & vbCrLf & _
+        "Filas limpiadas: 9 a 5000." & vbCrLf & _
+        "La formula de RFC_COMPLETO fue conservada.", _
+        vbInformation, _
+        "REGISTRAR"
+
+    Exit Sub
+
+ErrorHandler:
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "ERROR AL LIMPIAR REGISTRAR." & vbCrLf & vbCrLf & _
+        "Numero: " & Err.Number & vbCrLf & _
+        "Descripcion: " & Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+End Sub
+
+
+'==========================================================
+' EXTENDER FORMULA DE RFC_COMPLETO
+'==========================================================
+
+Public Sub ExtenderFormulaRFCCompleto()
+
+    Dim ws As Worksheet
+    Dim formulaRFC As String
+
+    On Error GoTo ErrorHandler
+
+    Set ws = ThisWorkbook.Worksheets(HOJA_REGISTRAR)
+
+    formulaRFC = ws.Range("B9").formula
+
+    If formulaRFC = "" Then
+
+        MsgBox _
+            "La celda B9 no contiene una formula." & vbCrLf & vbCrLf & _
+            "No se modifico ninguna celda.", _
+            vbExclamation, _
+            "RFC_COMPLETO"
+
+        Exit Sub
+
+    End If
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+    ws.Range("B9").formula = formulaRFC
+
+    ws.Range("B9:B5000").FillDown
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "La formula de RFC_COMPLETO fue extendida " & _
+        "desde la fila 9 hasta la fila 5000.", _
+        vbInformation, _
+        "RFC_COMPLETO"
+
+    Exit Sub
+
+ErrorHandler:
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "ERROR AL EXTENDER RFC_COMPLETO." & vbCrLf & vbCrLf & _
+        "Numero: " & Err.Number & vbCrLf & _
+        "Descripcion: " & Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+End Sub
+
+
+'==========================================================
+' BORRAR NOMBRE
+'==========================================================
+
+Private Sub BorrarNombreSeguro(ByVal nombre As String)
+
+    On Error Resume Next
+
+    ThisWorkbook.Names(nombre).Delete
+
+End Sub
+
+
