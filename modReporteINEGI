@@ -1,0 +1,1453 @@
+Option Explicit
+
+'==========================================================
+' MODULO: modReporteINEGI
+'
+' REPORTE INEGI
+'
+' Permite seleccionar cualquier cantidad de años.
+'
+' Ejemplo:
+' 2020,2021,2022,2023,2024,2025,2026
+'
+'==========================================================
+
+Private Const TABLA_ACCESS As String = "AHORRO_SOLIDARIO"
+
+Private Const CAMPO_ANIO As String = "AÑO"
+
+Private Const CAMPO_SEXO As String = "SEXO"
+
+Private Const CAMPO_CB As String = "C_B"
+
+Private Const CAMPO_REGIMEN As String = _
+    "REGIMEN_EN_SIRI_ES_EL_QUE_MAS_IMPORTANCIA_TIENE_PARA_APLICARLO_A"
+
+
+'==========================================================
+' MACRO PRINCIPAL
+'==========================================================
+
+Public Sub GenerarReporteINEGI()
+
+    Dim cn As Object
+    Dim rs As Object
+
+    Dim ws As Worksheet
+
+    Dim anios As Object
+    Dim resumen As Object
+    Dim regimenes As Object
+
+    Dim textoAnios As String
+    Dim partes() As String
+
+    Dim i As Long
+    Dim anio As String
+
+    Dim clave As Variant
+
+    Dim indiceAnio As Long
+    Dim indiceSexo As Long
+    Dim indiceCB As Long
+    Dim indiceRegimen As Long
+
+    Dim encontrados As Long
+
+    Dim nombreHoja As String
+    Dim fechaActual As String
+
+    On Error GoTo ErrorHandler
+
+    '======================================================
+    ' PEDIR AÑOS
+    '======================================================
+
+    textoAnios = InputBox( _
+        "Escribe los años que deseas incluir." & vbCrLf & vbCrLf & _
+        "Puedes agregar tantos años como necesites." & vbCrLf & vbCrLf & _
+        "Ejemplo:" & vbCrLf & _
+        "2020,2021,2022,2023,2024,2025,2026" & vbCrLf & vbCrLf & _
+        "También puedes escribirlos con espacios:" & vbCrLf & _
+        "2020, 2021, 2022", _
+        "SELECCIONAR AÑOS")
+
+    If Trim$(textoAnios) = "" Then
+        Exit Sub
+    End If
+
+    '======================================================
+    ' CREAR DICCIONARIO DE AÑOS
+    '======================================================
+
+    Set anios = CreateObject("Scripting.Dictionary")
+
+    partes = Split(textoAnios, ",")
+
+    For i = LBound(partes) To UBound(partes)
+
+        anio = Trim$(partes(i))
+
+        If Not EsAnioValido(anio) Then
+
+            MsgBox _
+                "El valor '" & anio & _
+                "' no es un año válido." & vbCrLf & vbCrLf & _
+                "Debes utilizar años de cuatro dígitos." & vbCrLf & _
+                "Ejemplo: 2024", _
+                vbExclamation, _
+                "AÑO NO VÁLIDO"
+
+            Exit Sub
+
+        End If
+
+        If Not anios.Exists(anio) Then
+            anios.Add anio, anio
+        End If
+
+    Next i
+
+    If anios.Count = 0 Then
+
+        MsgBox _
+            "No se seleccionó ningún año.", _
+            vbExclamation, _
+            "REPORTE INEGI"
+
+        Exit Sub
+
+    End If
+
+    '======================================================
+    ' PREPARAR EXCEL
+    '======================================================
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.StatusBar = "Conectando con Access..."
+
+    '======================================================
+    ' ABRIR ACCESS
+    '======================================================
+
+    Set cn = AbrirConexionAccess()
+
+    If cn Is Nothing Then
+        GoTo Salir
+    End If
+
+    '======================================================
+    ' OBTENER TODOS LOS REGISTROS
+    '
+    ' NO SE FILTRA AÑO EN SQL.
+    ' VBA hace el filtro.
+    '======================================================
+
+    Application.StatusBar = "Leyendo la base de datos..."
+
+    Set rs = cn.Execute( _
+        "SELECT * FROM [" & TABLA_ACCESS & "]")
+
+    '======================================================
+    ' BUSCAR CAMPOS
+    '======================================================
+
+    indiceAnio = BuscarCampoRecordset(rs, CAMPO_ANIO)
+
+    indiceSexo = BuscarCampoRecordset(rs, CAMPO_SEXO)
+
+    indiceCB = BuscarCampoRecordset(rs, CAMPO_CB)
+
+    indiceRegimen = BuscarCampoRecordset(rs, CAMPO_REGIMEN)
+
+    '======================================================
+    ' VALIDAR CAMPOS
+    '======================================================
+
+    If indiceAnio < 0 Then
+
+        MsgBox _
+            "No se encontró el campo:" & vbCrLf & _
+            CAMPO_ANIO, _
+            vbCritical, _
+            "CAMPO NO ENCONTRADO"
+
+        GoTo Salir
+
+    End If
+
+    If indiceSexo < 0 Then
+
+        MsgBox _
+            "No se encontró el campo:" & vbCrLf & _
+            CAMPO_SEXO, _
+            vbCritical, _
+            "CAMPO NO ENCONTRADO"
+
+        GoTo Salir
+
+    End If
+
+    If indiceCB < 0 Then
+
+        MsgBox _
+            "No se encontró el campo:" & vbCrLf & _
+            CAMPO_CB, _
+            vbCritical, _
+            "CAMPO NO ENCONTRADO"
+
+        GoTo Salir
+
+    End If
+
+    If indiceRegimen < 0 Then
+
+        MsgBox _
+            "No se encontró el campo:" & vbCrLf & _
+            CAMPO_REGIMEN, _
+            vbCritical, _
+            "CAMPO NO ENCONTRADO"
+
+        GoTo Salir
+
+    End If
+
+    '======================================================
+    ' CREAR ESTRUCTURAS
+    '======================================================
+
+    Set resumen = CreateObject("Scripting.Dictionary")
+
+    Set regimenes = CreateObject("Scripting.Dictionary")
+
+    '======================================================
+    ' CREAR CONTADOR PARA CADA AÑO
+    '======================================================
+
+    For Each clave In anios.Keys
+
+        resumen.Add CStr(clave), CrearContador()
+
+    Next clave
+
+    '======================================================
+    ' PROCESAR BASE
+    '======================================================
+
+    Application.StatusBar = "Procesando registros..."
+
+    encontrados = ProcesarBase( _
+        rs, _
+        indiceAnio, _
+        indiceSexo, _
+        indiceCB, _
+        indiceRegimen, _
+        anios, _
+        resumen, _
+        regimenes)
+
+    '======================================================
+    ' COMPROBAR RESULTADOS
+    '======================================================
+
+    If encontrados = 0 Then
+
+        MsgBox _
+            "No se encontraron registros para los años seleccionados." & _
+            vbCrLf & vbCrLf & _
+            "Años buscados:" & vbCrLf & _
+            textoAnios, _
+            vbInformation, _
+            "REPORTE INEGI"
+
+        GoTo Salir
+
+    End If
+
+    '======================================================
+    ' CREAR HOJA
+    '======================================================
+
+    fechaActual = Format(Date, "dd-mm-yyyy")
+
+    nombreHoja = _
+        "Reporte INEGI (" & _
+        fechaActual & ")"
+
+    Set ws = CrearHojaReporte(nombreHoja)
+
+    '======================================================
+    ' CREAR ENCABEZADO
+    '======================================================
+
+    CrearEncabezado ws
+
+    '======================================================
+    ' ESCRIBIR RESUMEN
+    '======================================================
+
+    EscribirResumen _
+        ws, _
+        resumen, _
+        anios
+
+    '======================================================
+    ' ESCRIBIR REGÍMENES
+    '======================================================
+
+    EscribirRegimenes _
+        ws, _
+        regimenes, _
+        anios
+
+    '======================================================
+    ' FORMATO
+    '======================================================
+
+    FormatearReporte ws
+
+    '======================================================
+    ' MENSAJE FINAL
+    '======================================================
+
+    MsgBox _
+        "REPORTE INEGI GENERADO CORRECTAMENTE." & _
+        vbCrLf & vbCrLf & _
+        "Años seleccionados: " & anios.Count & _
+        vbCrLf & _
+        "Registros encontrados: " & encontrados & _
+        vbCrLf & vbCrLf & _
+        "Hoja creada:" & vbCrLf & _
+        ws.Name, _
+        vbInformation, _
+        "REPORTE INEGI"
+
+Salir:
+
+    On Error Resume Next
+
+    If Not rs Is Nothing Then
+        rs.Close
+    End If
+
+    If Not cn Is Nothing Then
+        cn.Close
+    End If
+
+    Application.StatusBar = False
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    Exit Sub
+
+ErrorHandler:
+
+    Application.StatusBar = False
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    MsgBox _
+        "ERROR AL GENERAR EL REPORTE." & _
+        vbCrLf & vbCrLf & _
+        "Número: " & Err.Number & _
+        vbCrLf & _
+        "Descripción: " & Err.Description, _
+        vbCritical, _
+        "ERROR REPORTE INEGI"
+
+End Sub
+
+
+'==========================================================
+' PROCESAR BASE
+'==========================================================
+
+Private Function ProcesarBase( _
+    ByVal rs As Object, _
+    ByVal indiceAnio As Long, _
+    ByVal indiceSexo As Long, _
+    ByVal indiceCB As Long, _
+    ByVal indiceRegimen As Long, _
+    ByVal anios As Object, _
+    ByVal resumen As Object, _
+    ByVal regimenes As Object) As Long
+
+    Dim anio As String
+    Dim sexo As String
+    Dim cb As String
+    Dim regimen As String
+
+    Dim contador As Object
+    Dim dictRegimen As Object
+
+    Dim encontrados As Long
+
+    Do While Not rs.EOF
+
+        '--------------------------------------------------
+        ' AÑO
+        '--------------------------------------------------
+
+        anio = ObtenerAnio( _
+            rs.Fields(indiceAnio).Value)
+
+        '--------------------------------------------------
+        ' COMPROBAR AÑO
+        '--------------------------------------------------
+
+        If anios.Exists(anio) Then
+
+            encontrados = encontrados + 1
+
+            Set contador = resumen(anio)
+
+            '----------------------------------------------
+            ' SEXO
+            '----------------------------------------------
+
+            sexo = UCase$( _
+                TextoSeguro( _
+                    rs.Fields(indiceSexo).Value))
+
+            '----------------------------------------------
+            ' C_B
+            '----------------------------------------------
+
+            cb = UCase$( _
+                TextoSeguro( _
+                    rs.Fields(indiceCB).Value))
+
+            '----------------------------------------------
+            ' REGIMEN
+            '----------------------------------------------
+
+            regimen = TextoSeguro( _
+                rs.Fields(indiceRegimen).Value)
+
+            If regimen = "" Then
+                regimen = "SIN REGIMEN"
+            End If
+
+            '----------------------------------------------
+            ' TOTAL
+            '----------------------------------------------
+
+            contador("TOTAL") = _
+                contador("TOTAL") + 1
+
+            '----------------------------------------------
+            ' SEXO
+            '----------------------------------------------
+
+            Select Case sexo
+
+                Case "H", "HOMBRE", "MASCULINO"
+
+                    contador("HOMBRES") = _
+                        contador("HOMBRES") + 1
+
+                Case "M", "MUJER", "F", "FEMENINO"
+
+                    contador("MUJERES") = _
+                        contador("MUJERES") + 1
+
+            End Select
+
+            '----------------------------------------------
+            ' C_B
+            '
+            ' P, P1...P10 = PENDIENTES
+            ' 0 = 0%
+            ' 1 = 1%
+            ' 2 = 2%
+            '----------------------------------------------
+
+            Select Case cb
+
+                Case "P", _
+                     "P1", _
+                     "P2", _
+                     "P3", _
+                     "P4", _
+                     "P5", _
+                     "P6", _
+                     "P7", _
+                     "P8", _
+                     "P9", _
+                     "P10"
+
+                    contador("PENDIENTES") = _
+                        contador("PENDIENTES") + 1
+
+                Case "0"
+
+                    contador("PORCENTAJE_0") = _
+                        contador("PORCENTAJE_0") + 1
+
+                Case "1"
+
+                    contador("PORCENTAJE_1") = _
+                        contador("PORCENTAJE_1") + 1
+
+                Case "2"
+
+                    contador("PORCENTAJE_2") = _
+                        contador("PORCENTAJE_2") + 1
+
+            End Select
+
+            '----------------------------------------------
+            ' REGIMEN
+            '----------------------------------------------
+
+            If Not regimenes.Exists(regimen) Then
+
+                Set dictRegimen = _
+                    CreateObject("Scripting.Dictionary")
+
+                regimenes.Add _
+                    regimen, _
+                    dictRegimen
+
+            Else
+
+                Set dictRegimen = _
+                    regimenes(regimen)
+
+            End If
+
+            If Not dictRegimen.Exists(anio) Then
+
+                dictRegimen.Add _
+                    anio, _
+                    0
+
+            End If
+
+            dictRegimen(anio) = _
+                dictRegimen(anio) + 1
+
+        End If
+
+        rs.MoveNext
+
+        If encontrados Mod 500 = 0 Then
+            DoEvents
+        End If
+
+    Loop
+
+    ProcesarBase = encontrados
+
+End Function
+
+
+'==========================================================
+' CREAR CONTADOR
+'==========================================================
+
+Private Function CrearContador() As Object
+
+    Dim d As Object
+
+    Set d = CreateObject("Scripting.Dictionary")
+
+    d.Add "TOTAL", 0
+    d.Add "HOMBRES", 0
+    d.Add "MUJERES", 0
+    d.Add "PENDIENTES", 0
+    d.Add "PORCENTAJE_0", 0
+    d.Add "PORCENTAJE_1", 0
+    d.Add "PORCENTAJE_2", 0
+
+    Set CrearContador = d
+
+End Function
+
+
+'==========================================================
+' ESCRIBIR RESUMEN
+'==========================================================
+
+Private Sub EscribirResumen( _
+    ByVal ws As Worksheet, _
+    ByVal resumen As Object, _
+    ByVal anios As Object)
+
+    Dim fila As Long
+    Dim clave As Variant
+    Dim contador As Object
+
+    Dim total As Long
+    Dim hombres As Long
+    Dim mujeres As Long
+    Dim pendientes As Long
+    Dim p0 As Long
+    Dim p1 As Long
+    Dim p2 As Long
+
+    '======================================================
+    ' TITULO
+    '======================================================
+
+    fila = 5
+
+    ws.Cells(fila, 1).Value = _
+        "RESUMEN POR AÑO"
+
+    fila = 6
+
+    '======================================================
+    ' ENCABEZADOS
+    '======================================================
+
+    ws.Cells(fila, 1).Value = "AÑO"
+    ws.Cells(fila, 2).Value = "TOTAL"
+    ws.Cells(fila, 3).Value = "HOMBRES"
+    ws.Cells(fila, 4).Value = "MUJERES"
+    ws.Cells(fila, 5).Value = "PENDIENTES"
+    ws.Cells(fila, 6).Value = "0%"
+    ws.Cells(fila, 7).Value = "1%"
+    ws.Cells(fila, 8).Value = "2%"
+
+    fila = 7
+
+    '======================================================
+    ' AÑOS
+    '======================================================
+
+    For Each clave In anios.Keys
+
+        Set contador = _
+            resumen(CStr(clave))
+
+        ws.Cells(fila, 1).Value = CStr(clave)
+
+        ws.Cells(fila, 2).Value = _
+            contador("TOTAL")
+
+        ws.Cells(fila, 3).Value = _
+            contador("HOMBRES")
+
+        ws.Cells(fila, 4).Value = _
+            contador("MUJERES")
+
+        ws.Cells(fila, 5).Value = _
+            contador("PENDIENTES")
+
+        ws.Cells(fila, 6).Value = _
+            contador("PORCENTAJE_0")
+
+        ws.Cells(fila, 7).Value = _
+            contador("PORCENTAJE_1")
+
+        ws.Cells(fila, 8).Value = _
+            contador("PORCENTAJE_2")
+
+        total = _
+            total + contador("TOTAL")
+
+        hombres = _
+            hombres + contador("HOMBRES")
+
+        mujeres = _
+            mujeres + contador("MUJERES")
+
+        pendientes = _
+            pendientes + contador("PENDIENTES")
+
+        p0 = _
+            p0 + contador("PORCENTAJE_0")
+
+        p1 = _
+            p1 + contador("PORCENTAJE_1")
+
+        p2 = _
+            p2 + contador("PORCENTAJE_2")
+
+        fila = fila + 1
+
+    Next clave
+
+    '======================================================
+    ' TOTAL GENERAL
+    '======================================================
+
+    ws.Cells(fila, 1).Value = "TOTAL GENERAL"
+
+    ws.Cells(fila, 2).Value = total
+    ws.Cells(fila, 3).Value = hombres
+    ws.Cells(fila, 4).Value = mujeres
+    ws.Cells(fila, 5).Value = pendientes
+    ws.Cells(fila, 6).Value = p0
+    ws.Cells(fila, 7).Value = p1
+    ws.Cells(fila, 8).Value = p2
+
+End Sub
+
+
+'==========================================================
+' ESCRIBIR REGIMENES
+'==========================================================
+
+Private Sub EscribirRegimenes( _
+    ByVal ws As Worksheet, _
+    ByVal regimenes As Object, _
+    ByVal anios As Object)
+
+    Dim fila As Long
+    Dim columna As Long
+
+    Dim claveRegimen As Variant
+    Dim claveAnio As Variant
+
+    Dim dictRegimen As Object
+
+    Dim totalRegimen As Long
+
+    '======================================================
+    ' TITULO
+    '======================================================
+
+    fila = ws.Cells( _
+        ws.Rows.Count, _
+        1).End(xlUp).Row + 3
+
+    ws.Cells(fila, 1).Value = _
+        "TIPO DE RÉGIMEN"
+
+    fila = fila + 1
+
+    '======================================================
+    ' ENCABEZADO
+    '======================================================
+
+    ws.Cells(fila, 1).Value = "RÉGIMEN"
+
+    columna = 2
+
+    For Each claveAnio In anios.Keys
+
+        ws.Cells( _
+            fila, _
+            columna).Value = _
+            CStr(claveAnio)
+
+        columna = columna + 1
+
+    Next claveAnio
+
+    ws.Cells( _
+        fila, _
+        columna).Value = "TOTAL"
+
+    fila = fila + 1
+
+    '======================================================
+    ' REGIMENES
+    '======================================================
+
+    For Each claveRegimen In regimenes.Keys
+
+        Set dictRegimen = _
+            regimenes(CStr(claveRegimen))
+
+        ws.Cells( _
+            fila, _
+            1).Value = _
+            CStr(claveRegimen)
+
+        columna = 2
+
+        totalRegimen = 0
+
+        For Each claveAnio In anios.Keys
+
+            If dictRegimen.Exists( _
+                CStr(claveAnio)) Then
+
+                ws.Cells( _
+                    fila, _
+                    columna).Value = _
+                    dictRegimen( _
+                        CStr(claveAnio))
+
+                totalRegimen = _
+                    totalRegimen + _
+                    dictRegimen( _
+                        CStr(claveAnio))
+
+            Else
+
+                ws.Cells( _
+                    fila, _
+                    columna).Value = 0
+
+            End If
+
+            columna = columna + 1
+
+        Next claveAnio
+
+        ws.Cells( _
+            fila, _
+            columna).Value = _
+            totalRegimen
+
+        fila = fila + 1
+
+    Next claveRegimen
+
+End Sub
+
+
+'==========================================================
+' VALIDAR AÑO
+'==========================================================
+
+Private Function EsAnioValido( _
+    ByVal valor As String) As Boolean
+
+    Dim numero As Long
+
+    valor = Trim$(valor)
+
+    If Len(valor) <> 4 Then
+
+        EsAnioValido = False
+        Exit Function
+
+    End If
+
+    If Not IsNumeric(valor) Then
+
+        EsAnioValido = False
+        Exit Function
+
+    End If
+
+    numero = CLng(valor)
+
+    If numero >= 1900 And numero <= 2100 Then
+
+        EsAnioValido = True
+
+    Else
+
+        EsAnioValido = False
+
+    End If
+
+End Function
+
+
+'==========================================================
+' OBTENER AÑO
+'==========================================================
+
+Private Function ObtenerAnio( _
+    ByVal valor As Variant) As String
+
+    Dim texto As String
+
+    On Error GoTo ErrorAnio
+
+    If IsNull(valor) Then
+
+        ObtenerAnio = ""
+        Exit Function
+
+    End If
+
+    If IsDate(valor) Then
+
+        ObtenerAnio = _
+            CStr(Year(CDate(valor)))
+
+        Exit Function
+
+    End If
+
+    texto = Trim$(CStr(valor))
+
+    If texto = "" Then
+
+        ObtenerAnio = ""
+        Exit Function
+
+    End If
+
+    If IsNumeric(texto) Then
+
+        If CLng(Val(texto)) >= 1900 And _
+           CLng(Val(texto)) <= 2100 Then
+
+            ObtenerAnio = _
+                CStr(CLng(Val(texto)))
+
+            Exit Function
+
+        End If
+
+    End If
+
+    If Len(texto) >= 4 Then
+
+        If IsNumeric(Left$(texto, 4)) Then
+
+            If CLng(Left$(texto, 4)) >= 1900 And _
+               CLng(Left$(texto, 4)) <= 2100 Then
+
+                ObtenerAnio = _
+                    Left$(texto, 4)
+
+                Exit Function
+
+            End If
+
+        End If
+
+    End If
+
+ErrorAnio:
+
+    ObtenerAnio = ""
+
+End Function
+
+
+'==========================================================
+' BUSCAR CAMPO
+'==========================================================
+
+Private Function BuscarCampoRecordset( _
+    ByVal rs As Object, _
+    ByVal nombreBuscado As String) As Long
+
+    Dim i As Long
+    Dim nombreActual As String
+
+    BuscarCampoRecordset = -1
+
+    For i = 0 To rs.Fields.Count - 1
+
+        nombreActual = _
+            NormalizarNombre( _
+                rs.Fields(i).Name)
+
+        If nombreActual = _
+           NormalizarNombre(nombreBuscado) Then
+
+            BuscarCampoRecordset = i
+            Exit Function
+
+        End If
+
+    Next i
+
+End Function
+
+
+'==========================================================
+' NORMALIZAR NOMBRE
+'==========================================================
+
+Private Function NormalizarNombre( _
+    ByVal texto As String) As String
+
+    texto = UCase$(Trim$(texto))
+
+    texto = Replace(texto, " ", "")
+    texto = Replace(texto, "_", "")
+
+    NormalizarNombre = texto
+
+End Function
+
+
+'==========================================================
+' TEXTO SEGURO
+'==========================================================
+
+Private Function TextoSeguro( _
+    ByVal valor As Variant) As String
+
+    If IsNull(valor) Then
+
+        TextoSeguro = ""
+
+    ElseIf IsError(valor) Then
+
+        TextoSeguro = ""
+
+    Else
+
+        TextoSeguro = _
+            Trim$(CStr(valor))
+
+    End If
+
+End Function
+
+
+'==========================================================
+' CREAR HOJA
+'==========================================================
+
+Private Function CrearHojaReporte( _
+    ByVal nombreBase As String) As Worksheet
+
+    Dim ws As Worksheet
+
+    Dim nombreFinal As String
+
+    Dim contador As Long
+
+    nombreFinal = nombreBase
+
+    contador = 1
+
+    Do While HojaExiste(nombreFinal)
+
+        contador = contador + 1
+
+        nombreFinal = _
+            nombreBase & "_" & contador
+
+    Loop
+
+    Set ws = _
+        ThisWorkbook.Worksheets.Add( _
+            After:= _
+            ThisWorkbook.Worksheets( _
+                ThisWorkbook.Worksheets.Count))
+
+    ws.Name = nombreFinal
+
+    Set CrearHojaReporte = ws
+
+End Function
+
+
+'==========================================================
+' COMPROBAR HOJA
+'==========================================================
+
+Private Function HojaExiste( _
+    ByVal nombreHoja As String) As Boolean
+
+    Dim ws As Worksheet
+
+    On Error Resume Next
+
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            nombreHoja)
+
+    HojaExiste = _
+        Not ws Is Nothing
+
+    Set ws = Nothing
+
+    On Error GoTo 0
+
+End Function
+
+
+'==========================================================
+' ENCABEZADO
+'==========================================================
+
+Private Sub CrearEncabezado( _
+    ByVal ws As Worksheet)
+
+    With ws
+
+        .Range("A1:H1").Merge
+
+        .Range("A1").Value = _
+            "REPORTE INEGI"
+
+        .Range("A2:H2").Merge
+
+        .Range("A2").Value = _
+            "Base de datos AHORRO SOLIDARIO"
+
+        .Range("A3:H3").Merge
+
+        .Range("A3").Value = _
+            "Fecha de generación: " & _
+            Format(Date, "dd/mm/yyyy")
+
+    End With
+
+End Sub
+
+
+'==========================================================
+' FORMATO FINAL DEL REPORTE
+'
+' ESTA PARTE ES LA QUE HACE QUE EL REPORTE SE VEA
+' MÁS LIMPIO Y PROFESIONAL.
+'==========================================================
+
+Private Sub FormatearReporte( _
+    ByVal ws As Worksheet)
+
+    Dim ultimaFila As Long
+    Dim ultimaColumna As Long
+
+    Dim filaResumenInicio As Long
+    Dim filaResumenFin As Long
+
+    Dim filaRegimenTitulo As Long
+    Dim filaRegimenEncabezado As Long
+    Dim filaRegimenFin As Long
+
+    Dim r As Long
+
+    '======================================================
+    ' CONFIGURACIÓN GENERAL
+    '======================================================
+
+    With ws
+
+        .Cells.Font.Name = "Calibri"
+        .Cells.Font.Size = 11
+
+        .Cells.VerticalAlignment = xlCenter
+
+        .Columns("A:A").ColumnWidth = 28
+
+        .Columns("B:H").ColumnWidth = 14
+
+        .Rows("1:3").RowHeight = 25
+
+    End With
+
+    '======================================================
+    ' ENCABEZADO PRINCIPAL
+    '======================================================
+
+    With ws.Range("A1:H1")
+
+        .Font.Bold = True
+        .Font.Size = 18
+
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+
+        .Borders.LineStyle = xlContinuous
+        .Borders.Weight = xlThin
+
+    End With
+
+    With ws.Range("A2:H2")
+
+        .Font.Bold = True
+        .Font.Size = 12
+
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+
+    End With
+
+    With ws.Range("A3:H3")
+
+        .Font.Italic = True
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+
+    End With
+
+    '======================================================
+    ' RESUMEN
+    '======================================================
+
+    filaResumenInicio = 6
+
+    filaResumenFin = _
+        ws.Cells( _
+            ws.Rows.Count, _
+            1).End(xlUp).Row
+
+    '------------------------------------------------------
+    ' BUSCAR TITULO DE REGIMEN
+    '------------------------------------------------------
+
+    filaRegimenTitulo = 0
+
+    For r = filaResumenInicio To filaResumenFin
+
+        If UCase$(Trim$( _
+            CStr(ws.Cells(r, 1).Value))) = _
+            "TIPO DE RÉGIMEN" Then
+
+            filaRegimenTitulo = r
+
+            Exit For
+
+        End If
+
+    Next r
+
+    If filaRegimenTitulo > 0 Then
+
+        filaResumenFin = filaRegimenTitulo - 4
+
+    End If
+
+    '======================================================
+    ' TITULO RESUMEN
+    '======================================================
+
+    With ws.Range( _
+        ws.Cells(5, 1), _
+        ws.Cells(5, 8))
+
+        .Font.Bold = True
+        .Font.Size = 13
+
+        .HorizontalAlignment = xlLeft
+
+        .Borders.LineStyle = xlContinuous
+        .Borders.Weight = xlThin
+
+    End With
+
+    '======================================================
+    ' ENCABEZADO RESUMEN
+    '======================================================
+
+    With ws.Range("A6:H6")
+
+        .Font.Bold = True
+
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+
+        .Borders.LineStyle = xlContinuous
+        .Borders.Weight = xlThin
+
+    End With
+
+    '======================================================
+    ' FILAS DEL RESUMEN
+    '======================================================
+
+    If filaResumenFin >= 7 Then
+
+        For r = 7 To filaResumenFin
+
+            With ws.Range( _
+                ws.Cells(r, 1), _
+                ws.Cells(r, 8))
+
+                .Borders.LineStyle = xlContinuous
+                .Borders.Weight = xlThin
+
+            End With
+
+            '----------------------------------------------
+            ' ALTERNAR FILAS
+            '----------------------------------------------
+
+            If r Mod 2 = 1 Then
+
+                With ws.Range( _
+                    ws.Cells(r, 1), _
+                    ws.Cells(r, 8))
+
+                    .HorizontalAlignment = xlCenter
+
+                End With
+
+            Else
+
+                With ws.Range( _
+                    ws.Cells(r, 1), _
+                    ws.Cells(r, 8))
+
+                    .HorizontalAlignment = xlCenter
+
+                End With
+
+            End If
+
+        Next r
+
+    End If
+
+    '======================================================
+    ' TOTAL GENERAL DEL RESUMEN
+    '======================================================
+
+    If filaResumenFin >= 7 Then
+
+        With ws.Range( _
+            ws.Cells(filaResumenFin, 1), _
+            ws.Cells(filaResumenFin, 8))
+
+            .Font.Bold = True
+
+            .Borders.LineStyle = xlContinuous
+            .Borders.Weight = xlMedium
+
+        End With
+
+    End If
+
+    '======================================================
+    ' TITULO REGIMEN
+    '======================================================
+
+    If filaRegimenTitulo > 0 Then
+
+        filaRegimenEncabezado = _
+            filaRegimenTitulo + 1
+
+        filaRegimenFin = _
+            ws.Cells( _
+                ws.Rows.Count, _
+                1).End(xlUp).Row
+
+        '--------------------------------------------------
+        ' TITULO
+        '--------------------------------------------------
+
+        With ws.Range( _
+            ws.Cells(filaRegimenTitulo, 1), _
+            ws.Cells(filaRegimenTitulo, 8))
+
+            .Font.Bold = True
+            .Font.Size = 13
+
+            .HorizontalAlignment = xlLeft
+
+            .Borders.LineStyle = xlContinuous
+            .Borders.Weight = xlThin
+
+        End With
+
+        '--------------------------------------------------
+        ' ENCABEZADO
+        '--------------------------------------------------
+
+        ultimaColumna = _
+            ws.Cells( _
+                filaRegimenEncabezado, _
+                ws.Columns.Count).End(xlToLeft).Column
+
+        With ws.Range( _
+            ws.Cells(filaRegimenEncabezado, 1), _
+            ws.Cells( _
+                filaRegimenEncabezado, _
+                ultimaColumna))
+
+            .Font.Bold = True
+
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+
+            .Borders.LineStyle = xlContinuous
+            .Borders.Weight = xlThin
+
+        End With
+
+        '--------------------------------------------------
+        ' FILAS DE REGIMEN
+        '--------------------------------------------------
+
+        If filaRegimenFin > _
+           filaRegimenEncabezado Then
+
+            For r = _
+                filaRegimenEncabezado + 1 _
+                To filaRegimenFin
+
+                With ws.Range( _
+                    ws.Cells(r, 1), _
+                    ws.Cells( _
+                        r, _
+                        ultimaColumna))
+
+                    .Borders.LineStyle = _
+                        xlContinuous
+
+                    .Borders.Weight = xlThin
+
+                    .VerticalAlignment = _
+                        xlCenter
+
+                End With
+
+                ws.Cells(r, 1).HorizontalAlignment = _
+                    xlLeft
+
+                If ultimaColumna >= 2 Then
+
+                    ws.Range( _
+                        ws.Cells(r, 2), _
+                        ws.Cells( _
+                            r, _
+                            ultimaColumna)).HorizontalAlignment = _
+                            xlCenter
+
+                End If
+
+            Next r
+
+        End If
+
+        '--------------------------------------------------
+        ' TOTAL DE REGIMEN
+        '--------------------------------------------------
+
+        If filaRegimenFin > _
+           filaRegimenEncabezado Then
+
+            With ws.Range( _
+                ws.Cells( _
+                    filaRegimenEncabezado + 1, _
+                    ultimaColumna), _
+                ws.Cells( _
+                    filaRegimenFin, _
+                    ultimaColumna))
+
+                .Font.Bold = True
+
+            End With
+
+        End If
+
+    End If
+
+    '======================================================
+    ' ALINEACION
+    '======================================================
+
+    ws.Range("A:A").HorizontalAlignment = xlLeft
+
+    If ws.Columns.Count >= 8 Then
+
+        ws.Range("B:H").HorizontalAlignment = xlCenter
+
+    End If
+
+    '======================================================
+    ' AJUSTAR TEXTO
+    '======================================================
+
+    ws.Columns("A:A").WrapText = True
+
+    '======================================================
+    ' SELECCIONAR CELDA INICIAL
+    '======================================================
+
+    ws.Activate
+
+    ws.Range("A1").Select
+
+End Sub
+
