@@ -1,120 +1,143 @@
 Option Explicit
 
 '========================================================
-' REGISTRAR NUEVO REGISTRO
+' REGISTRAR NUEVOS REGISTROS
+'
+' FUNCIONAMIENTO:
+'
+' - NO ES NECESARIO SELECCIONAR UNA FILA.
+' - REVISA TODAS LAS FILAS DESDE LA 9 HASTA LA 5000.
+' - REGISTRA TODAS LAS FILAS QUE TENGAN RFC.
+' - IGNORA FILAS VACIAS.
+' - CONSERVA FORMULAS.
+' - CONSERVA DROP-DOWNS / VALIDACIONES.
+' - LIMPIA SOLO LAS CELDAS DE CAPTURA.
+'
+'========================================================
+
+
+Private Const HOJA_REGISTRAR As String = "REGISTRAR"
+
+Private Const TABLA_ACCESS As String = "AHORRO_SOLIDARIO"
+
+Private Const FILA_ENCABEZADOS As Long = 8
+
+Private Const FILA_INICIAL As Long = 9
+
+Private Const FILA_FINAL As Long = 5000
+
+Private Const ULTIMA_COLUMNA As Long = 38
+
+Private Const COLUMNA_RFC As Long = 1
+
+Private Const COLUMNA_REVISO As Long = 36
+
+
+'========================================================
+' MACRO PRINCIPAL
 '========================================================
 
 Public Sub RegistrarNuevoRegistro()
 
     Dim ws As Worksheet
+
     Dim cn As Object
     Dim rsSchema As Object
 
-    Dim fila As Long
-    Dim ultimaColumna As Long
-
-    Dim sql As String
-    Dim campos As String
-    Dim valores As String
-
-    Dim i As Long
-    Dim nombreCampo As String
-    Dim valor As Variant
-
     Dim camposAccess As Object
+
+    Dim fila As Long
+
+    Dim registrosGuardados As Long
+
+    Dim filasConDatos As Long
+
+    Dim filasSinRFC As Long
+
+    Dim errores As Long
+
+    Dim nombreCampo As String
+
     Dim camposNoEncontrados As String
 
     Dim rfcRegistrado As String
-    Dim nombreReviso As String
+
+    Dim resultado As Boolean
+
+    Dim ultimaColumna As Long
+
+    Dim respuesta As VbMsgBoxResult
+
+    Dim listaRFC As String
+
+    Dim sql As String
+
+    Dim i As Long
+
 
     On Error GoTo ErrorHandler
 
-    Set ws = ThisWorkbook.Worksheets("REGISTRAR")
 
     '====================================================
-    ' FILA QUE SE VA A REGISTRAR
+    ' HOJA REGISTRAR
     '====================================================
 
-    fila = ActiveCell.Row
+    Set ws = _
+        ThisWorkbook.Worksheets( _
+            HOJA_REGISTRAR)
 
-    If fila < 9 Then
 
-        MsgBox _
-            "SELECCIONA UNA CELDA DE LA FILA QUE QUIERES REGISTRAR.", _
-            vbExclamation, _
-            "REGISTRAR"
+    ultimaColumna = ULTIMA_COLUMNA
 
-        Exit Sub
-
-    End If
 
     '====================================================
-    ' TOTAL DE CAMPOS
+    ' COMPROBAR SI HAY ALGO CAPTURADO
     '====================================================
 
-    ultimaColumna = 38
+    For fila = FILA_INICIAL To FILA_FINAL
 
-    '====================================================
-    ' RFC OBLIGATORIO
-    '====================================================
+        If FilaTieneDatosCapturados( _
+            ws, _
+            fila, _
+            ultimaColumna) Then
 
-    If Trim(CStr(ws.Cells(fila, 1).Value)) = "" Then
-
-        MsgBox _
-            "EL RFC ES OBLIGATORIO." & vbCrLf & vbCrLf & _
-            "CAPTURA EL RFC ANTES DE REGISTRAR.", _
-            vbExclamation, _
-            "REGISTRAR"
-
-        ws.Cells(fila, 1).Select
-
-        Exit Sub
-
-    End If
-
-    '====================================================
-    ' GUARDAR RFC PARA EL MENSAJE
-    '====================================================
-
-    rfcRegistrado = CStr(ws.Cells(fila, 1).Value)
-
-    '====================================================
-    ' GUARDAR REVISO ANTES DE LIMPIAR
-    '
-    ' REVISO = AJ = columna 36
-    '====================================================
-
-    nombreReviso = Trim( _
-        UCase(CStr(ws.Cells(fila, 36).Value)) _
-    )
-
-    Application.ScreenUpdating = False
-    Application.EnableEvents = False
-
-    '====================================================
-    ' CONVERTIR TEXTOS A MAYÚSCULAS
-    '====================================================
-
-    For i = 1 To ultimaColumna
-
-        If Not IsError(ws.Cells(fila, i).Value) Then
-
-            If VarType(ws.Cells(fila, i).Value) = vbString Then
-
-                ws.Cells(fila, i).Value = _
-                    UCase(Trim(CStr(ws.Cells(fila, i).Value)))
-
-            End If
+            filasConDatos = _
+                filasConDatos + 1
 
         End If
 
-    Next i
+    Next fila
+
+
+    If filasConDatos = 0 Then
+
+        MsgBox _
+            "NO HAY REGISTROS PARA GUARDAR." & _
+            vbCrLf & vbCrLf & _
+            "Captura al menos un registro antes de presionar REGISTRAR.", _
+            vbExclamation, _
+            "REGISTRAR"
+
+        Exit Sub
+
+    End If
+
 
     '====================================================
     ' CONECTAR CON ACCESS
     '====================================================
 
-    Set cn = AbrirConexionAccess()
+    Application.ScreenUpdating = False
+
+    Application.EnableEvents = False
+
+    Application.StatusBar = _
+        "Conectando con Access..."
+
+
+    Set cn = _
+        AbrirConexionAccess()
+
 
     If cn Is Nothing Then
 
@@ -127,80 +150,67 @@ Public Sub RegistrarNuevoRegistro()
 
     End If
 
+
     '====================================================
     ' OBTENER CAMPOS REALES DE ACCESS
     '====================================================
 
-    Set camposAccess = CreateObject("Scripting.Dictionary")
+    Set camposAccess = _
+        CreateObject("Scripting.Dictionary")
+
 
     camposAccess.CompareMode = 1
 
-    Set rsSchema = cn.Execute( _
-        "SELECT TOP 1 * FROM [AHORRO_SOLIDARIO]")
+
+    Set rsSchema = _
+        cn.Execute( _
+            "SELECT TOP 1 * FROM [" & _
+            TABLA_ACCESS & "]")
+
 
     For i = 0 To rsSchema.Fields.Count - 1
 
         camposAccess( _
-            rsSchema.Fields(i).Name _
-        ) = True
+            rsSchema.Fields(i).Name) = True
 
     Next i
+
 
     rsSchema.Close
 
     Set rsSchema = Nothing
 
+
     '====================================================
-    ' CONSTRUIR INSERT
+    ' COMPROBAR CAMPOS DE EXCEL CONTRA ACCESS
     '====================================================
 
-    campos = ""
-    valores = ""
     camposNoEncontrados = ""
+
 
     For i = 1 To ultimaColumna
 
-        nombreCampo = Trim( _
-            CStr(ws.Cells(8, i).Value) _
-        )
+        nombreCampo = _
+            Trim$( _
+                CStr( _
+                    ws.Cells( _
+                        FILA_ENCABEZADOS, _
+                        i).Value))
+
 
         If nombreCampo <> "" Then
 
-            If camposAccess.Exists(nombreCampo) Then
-
-                '----------------------------------------
-                ' CAMPO
-                '----------------------------------------
-
-                If campos <> "" Then
-                    campos = campos & ", "
-                End If
-
-                campos = campos & "[" & nombreCampo & "]"
-
-                '----------------------------------------
-                ' VALOR
-                '----------------------------------------
-
-                If valores <> "" Then
-                    valores = valores & ", "
-                End If
-
-                valor = ws.Cells(fila, i).Value
-
-                valores = valores & _
-                    ConvertirValorSQL(valor)
-
-            Else
-
-                '----------------------------------------
-                ' CAMPO NO ENCONTRADO
-                '----------------------------------------
+            If Not camposAccess.Exists( _
+                nombreCampo) Then
 
                 If camposNoEncontrados <> "" Then
+
                     camposNoEncontrados = _
-                        camposNoEncontrados & vbCrLf
+                        camposNoEncontrados & _
+                        vbCrLf
+
                 End If
+
 
                 camposNoEncontrados = _
                     camposNoEncontrados & _
@@ -211,6 +221,7 @@ Public Sub RegistrarNuevoRegistro()
         End If
 
     Next i
+
 
     '====================================================
     ' CAMPOS DESCONOCIDOS
@@ -231,112 +242,242 @@ Public Sub RegistrarNuevoRegistro()
 
     End If
 
-    '====================================================
-    ' CREAR SQL
-    '====================================================
-
-    sql = _
-        "INSERT INTO [AHORRO_SOLIDARIO] (" & _
-        campos & _
-        ") VALUES (" & _
-        valores & _
-        ")"
 
     '====================================================
-    ' GUARDAR EN ACCESS
+    ' REGISTRAR TODAS LAS FILAS
     '====================================================
 
-    cn.Execute sql
+    registrosGuardados = 0
+
+    filasSinRFC = 0
+
+    errores = 0
+
+    listaRFC = ""
+
+
+    For fila = FILA_INICIAL To FILA_FINAL
+
+
+        '------------------------------------------------
+        ' ¿LA FILA TIENE DATOS?
+        '------------------------------------------------
+
+        If FilaTieneDatosCapturados( _
+            ws, _
+            fila, _
+            ultimaColumna) Then
+
+
+            '--------------------------------------------
+            ' RFC OBLIGATORIO
+            '--------------------------------------------
+
+            If Trim$( _
+                CStr( _
+                    ws.Cells( _
+                        fila, _
+                        COLUMNA_RFC).Value)) = "" Then
+
+
+                filasSinRFC = _
+                    filasSinRFC + 1
+
+
+            Else
+
+
+                '----------------------------------------
+                ' GUARDAR RFC
+                '----------------------------------------
+
+                rfcRegistrado = _
+                    CStr( _
+                        ws.Cells( _
+                            fila, _
+                            COLUMNA_RFC).Value)
+
+
+                Application.StatusBar = _
+                    "Registrando fila " & _
+                    fila & _
+                    " - RFC: " & _
+                    rfcRegistrado
+
+
+                '----------------------------------------
+                ' CONVERTIR TEXTOS A MAYÚSCULAS
+                '----------------------------------------
+
+                ConvertirFilaAMayusculas _
+                    ws, _
+                    fila, _
+                    ultimaColumna
+
+
+                '----------------------------------------
+                ' REGISTRAR FILA
+                '----------------------------------------
+
+                resultado = _
+                    RegistrarFilaEnAccess( _
+                        ws, _
+                        cn, _
+                        camposAccess, _
+                        fila, _
+                        ultimaColumna)
+
+
+                If resultado Then
+
+
+                    registrosGuardados = _
+                        registrosGuardados + 1
+
+
+                    '------------------------------------
+                    ' GUARDAR RFC PARA MENSAJE
+                    '------------------------------------
+
+                    If listaRFC <> "" Then
+
+                        listaRFC = _
+                            listaRFC & vbCrLf
+
+                    End If
+
+
+                    listaRFC = _
+                        listaRFC & _
+                        "• " & _
+                        rfcRegistrado
+
+
+                    '------------------------------------
+                    ' AGREGAR REVISO A LA LISTA
+                    '------------------------------------
+
+                    ActualizarRevisoDeFila _
+                        ws, _
+                        fila
+
+
+                    '------------------------------------
+                    ' LIMPIAR SOLO DATOS
+                    '
+                    ' LAS FORMULAS Y VALIDACIONES
+                    ' SE CONSERVAN.
+                    '------------------------------------
+
+                    LimpiarFilaSinBorrarFormulas _
+                        ws, _
+                        fila, _
+                        ultimaColumna
+
+
+                Else
+
+                    errores = _
+                        errores + 1
+
+                End If
+
+
+            End If
+
+        End If
+
+
+        DoEvents
+
+
+    Next fila
+
 
     '====================================================
-    ' CERRAR CONEXIÓN
+    ' CERRAR ACCESS
     '====================================================
 
     cn.Close
 
     Set cn = Nothing
 
+
     '====================================================
-    ' AGREGAR NUEVO REVISO AL DESPLEGABLE
+    ' RESULTADO
     '====================================================
 
-    If nombreReviso <> "" Then
+    Application.EnableEvents = True
 
-        ActualizarListaReviso nombreReviso
+    Application.ScreenUpdating = True
+
+    Application.StatusBar = False
+
+
+    If registrosGuardados > 0 Then
+
+
+        Dim mensaje As String
+
+
+        mensaje = _
+            "REGISTROS GUARDADOS CORRECTAMENTE." & _
+            vbCrLf & vbCrLf & _
+            "Cantidad de registros: " & _
+            registrosGuardados
+
+
+        If filasSinRFC > 0 Then
+
+            mensaje = _
+                mensaje & _
+                vbCrLf & vbCrLf & _
+                "Filas ignoradas por no tener RFC: " & _
+                filasSinRFC
+
+        End If
+
+
+        If errores > 0 Then
+
+            mensaje = _
+                mensaje & _
+                vbCrLf & vbCrLf & _
+                "Registros con error: " & _
+                errores
+
+        End If
+
+
+        mensaje = _
+            mensaje & _
+            vbCrLf & vbCrLf & _
+            "Las filas registradas fueron limpiadas." & _
+            vbCrLf & _
+            "Las fórmulas y DropDowns se conservaron."
+
+
+        MsgBox _
+            mensaje, _
+            vbInformation, _
+            "AHORRO SOLIDARIO"
+
+
+    Else
+
+
+        MsgBox _
+            "NO SE GUARDÓ NINGÚN REGISTRO." & _
+            vbCrLf & vbCrLf & _
+            "Filas sin RFC: " & filasSinRFC & _
+            vbCrLf & _
+            "Errores: " & errores, _
+            vbExclamation, _
+            "REGISTRAR"
+
 
     End If
 
-    '====================================================
-    ' LIMPIAR TODA LA FILA
-    '====================================================
-
-    ws.Range( _
-        ws.Cells(fila, 1), _
-        ws.Cells(fila, ultimaColumna) _
-    ).ClearContents
-
-    '====================================================
-    ' RESTAURAR RFC_COMPLETO
-    '
-    ' B = RFC_COMPLETO
-    '
-    ' LA CELDA QUEDA VISUALMENTE VACÍA
-    ' PERO LA FÓRMULA PERMANECE.
-    '====================================================
-
-    ws.Cells(fila, 2).formula = _
-        "=IF(OR(A" & fila & "="""",C" & fila & _
-        "=""""),"""",A" & fila & "&C" & fila & ")"
-
-    '====================================================
-    ' RESTAURAR FECHA_APLICAR_AHORRO
-    '
-    ' Q = columna 17
-    ' P = columna 16
-    '====================================================
-
-    ws.Cells(fila, 17).formula = _
-        "=IF(P" & fila & "="""","""",P" & fila & "+90)"
-
-    ws.Cells(fila, 17).NumberFormat = "dd/mm/yyyy"
-
-    '====================================================
-    ' RESTAURAR FECHA_HOY
-    '
-    ' R = columna 18
-    '====================================================
-
-    ws.Cells(fila, 18).formula = "=TODAY()"
-
-    ws.Cells(fila, 18).NumberFormat = "dd/mm/yyyy"
-
-    '====================================================
-    ' QNA
-    '
-    ' M = columna 13
-    '====================================================
-
-    ws.Cells(fila, 13).NumberFormat = "00"
-
-    '====================================================
-    ' REGRESAR AL RFC
-    '====================================================
-
-    ws.Cells(fila, 1).Select
-
-    Application.EnableEvents = True
-    Application.ScreenUpdating = True
-
-    '====================================================
-    ' CONFIRMACIÓN
-    '====================================================
-
-    MsgBox _
-        "REGISTRO GUARDADO CORRECTAMENTE." & vbCrLf & vbCrLf & _
-        "RFC: " & rfcRegistrado & vbCrLf & vbCrLf & _
-        "LA FILA FUE LIMPIADA Y QUEDÓ LISTA PARA UN NUEVO REGISTRO.", _
-        vbInformation, _
-        "AHORRO SOLIDARIO"
 
     Exit Sub
 
@@ -349,28 +490,42 @@ Salir:
 
     On Error Resume Next
 
+
     If Not rsSchema Is Nothing Then
 
         If rsSchema.State <> 0 Then
+
             rsSchema.Close
+
         End If
 
     End If
+
 
     If Not cn Is Nothing Then
 
         If cn.State <> 0 Then
+
             cn.Close
+
         End If
 
     End If
 
+
     Set rsSchema = Nothing
+
     Set cn = Nothing
+
     Set camposAccess = Nothing
 
+
+    Application.StatusBar = False
+
     Application.EnableEvents = True
+
     Application.ScreenUpdating = True
+
 
     Exit Sub
 
@@ -381,17 +536,418 @@ Salir:
 
 ErrorHandler:
 
+
     Application.EnableEvents = True
+
     Application.ScreenUpdating = True
 
+    Application.StatusBar = False
+
+
     MsgBox _
-        "NO SE PUDO REGISTRAR EL REGISTRO." & vbCrLf & vbCrLf & _
-        "ERROR " & Err.Number & ":" & vbCrLf & _
+        "NO SE PUDO COMPLETAR EL REGISTRO." & _
+        vbCrLf & vbCrLf & _
+        "ERROR " & Err.Number & ":" & _
+        vbCrLf & _
         Err.Description, _
         vbCritical, _
         "ERROR AL REGISTRAR"
 
+
     Resume Salir
+
+
+End Sub
+
+
+'========================================================
+' REGISTRAR UNA FILA EN ACCESS
+'========================================================
+
+Private Function RegistrarFilaEnAccess( _
+    ByVal ws As Worksheet, _
+    ByVal cn As Object, _
+    ByVal camposAccess As Object, _
+    ByVal fila As Long, _
+    ByVal ultimaColumna As Long) As Boolean
+
+
+    Dim campos As String
+    Dim valores As String
+
+    Dim nombreCampo As String
+    Dim valor As Variant
+
+    Dim sql As String
+
+    Dim i As Long
+
+
+    On Error GoTo ErrorFila
+
+
+    campos = ""
+
+    valores = ""
+
+
+    '====================================================
+    ' CONSTRUIR INSERT
+    '====================================================
+
+    For i = 1 To ultimaColumna
+
+
+        nombreCampo = _
+            Trim$( _
+                CStr( _
+                    ws.Cells( _
+                        FILA_ENCABEZADOS, _
+                        i).Value))
+
+
+        If nombreCampo <> "" Then
+
+
+            If camposAccess.Exists( _
+                nombreCampo) Then
+
+
+                '----------------------------------------
+                ' CAMPO
+                '----------------------------------------
+
+                If campos <> "" Then
+
+                    campos = _
+                        campos & ", "
+
+                End If
+
+
+                campos = _
+                    campos & _
+                    "[" & _
+                    nombreCampo & _
+                    "]"
+
+
+                '----------------------------------------
+                ' VALOR
+                '----------------------------------------
+
+                If valores <> "" Then
+
+                    valores = _
+                        valores & ", "
+
+                End If
+
+
+                valor = _
+                    ws.Cells( _
+                        fila, _
+                        i).Value
+
+
+                valores = _
+                    valores & _
+                    ConvertirValorSQL(valor)
+
+
+            End If
+
+        End If
+
+
+    Next i
+
+
+    '====================================================
+    ' CREAR SQL
+    '====================================================
+
+    sql = _
+        "INSERT INTO [" & _
+        TABLA_ACCESS & "] (" & _
+        campos & _
+        ") VALUES (" & _
+        valores & _
+        ")"
+
+
+    '====================================================
+    ' EJECUTAR
+    '====================================================
+
+    cn.Execute sql
+
+
+    RegistrarFilaEnAccess = True
+
+    Exit Function
+
+
+ErrorFila:
+
+
+    MsgBox _
+        "NO SE PUDO REGISTRAR LA FILA " & _
+        fila & "." & _
+        vbCrLf & vbCrLf & _
+        "RFC: " & _
+        CStr( _
+            ws.Cells( _
+                fila, _
+                COLUMNA_RFC).Value) & _
+        vbCrLf & vbCrLf & _
+        "ERROR " & Err.Number & ":" & _
+        vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "ERROR EN FILA " & fila
+
+
+    RegistrarFilaEnAccess = False
+
+
+End Function
+
+
+'========================================================
+' COMPROBAR SI UNA FILA TIENE DATOS CAPTURADOS
+'
+' IMPORTANTE:
+'
+' NO CUENTA LAS FORMULAS COMO DATOS.
+'
+' De esta manera una fila que solamente tiene:
+'
+' B = formula
+' Q = formula
+' R = TODAY()
+'
+' NO se considera una fila capturada.
+'
+'========================================================
+
+Private Function FilaTieneDatosCapturados( _
+    ByVal ws As Worksheet, _
+    ByVal fila As Long, _
+    ByVal ultimaColumna As Long) As Boolean
+
+
+    Dim i As Long
+
+    Dim valor As Variant
+
+
+    FilaTieneDatosCapturados = False
+
+
+    For i = 1 To ultimaColumna
+
+
+        '------------------------------------------------
+        ' IGNORAR CELDAS CON FORMULA
+        '------------------------------------------------
+
+        If Not ws.Cells( _
+            fila, _
+            i).HasFormula Then
+
+
+            valor = _
+                ws.Cells( _
+                    fila, _
+                    i).Value
+
+
+            If Not IsError(valor) Then
+
+
+                If Trim$( _
+                    CStr(valor)) <> "" Then
+
+
+                    FilaTieneDatosCapturados = True
+
+
+                    Exit Function
+
+
+                End If
+
+
+            End If
+
+
+        End If
+
+
+    Next i
+
+
+End Function
+
+
+'========================================================
+' CONVERTIR FILA A MAYUSCULAS
+'
+' NO MODIFICA FORMULAS.
+'========================================================
+
+Private Sub ConvertirFilaAMayusculas( _
+    ByVal ws As Worksheet, _
+    ByVal fila As Long, _
+    ByVal ultimaColumna As Long)
+
+
+    Dim i As Long
+
+
+    For i = 1 To ultimaColumna
+
+
+        If Not ws.Cells( _
+            fila, _
+            i).HasFormula Then
+
+
+            If Not IsError( _
+                ws.Cells( _
+                    fila, _
+                    i).Value) Then
+
+
+                If VarType( _
+                    ws.Cells( _
+                        fila, _
+                        i).Value) = vbString Then
+
+
+                    ws.Cells( _
+                        fila, _
+                        i).Value = _
+                        UCase$( _
+                            Trim$( _
+                                CStr( _
+                                    ws.Cells( _
+                                        fila, _
+                                        i).Value)))
+
+
+                End If
+
+            End If
+
+        End If
+
+
+    Next i
+
+
+End Sub
+
+
+'========================================================
+' LIMPIAR FILA SIN BORRAR FORMULAS
+'
+' IMPORTANTE:
+'
+' ClearContents NO se utiliza sobre toda la fila.
+'
+' Solamente se limpian las celdas que:
+'
+' 1. NO tienen fórmula.
+'
+' 2. Son datos capturados.
+'
+' Las validaciones / DropDowns permanecen.
+'
+'========================================================
+
+Private Sub LimpiarFilaSinBorrarFormulas( _
+    ByVal ws As Worksheet, _
+    ByVal fila As Long, _
+    ByVal ultimaColumna As Long)
+
+
+    Dim i As Long
+
+
+    For i = 1 To ultimaColumna
+
+
+        If Not ws.Cells( _
+            fila, _
+            i).HasFormula Then
+
+
+            If Not IsError( _
+                ws.Cells( _
+                    fila, _
+                    i).Value) Then
+
+
+                If Trim$( _
+                    CStr( _
+                        ws.Cells( _
+                            fila, _
+                            i).Value)) <> "" Then
+
+
+                    ws.Cells( _
+                        fila, _
+                        i).ClearContents
+
+
+                End If
+
+
+            End If
+
+
+        End If
+
+
+    Next i
+
+
+End Sub
+
+
+'========================================================
+' ACTUALIZAR REVISO
+'
+' Toma el nombre capturado en AJ y lo agrega al
+' desplegable existente.
+'========================================================
+
+Private Sub ActualizarRevisoDeFila( _
+    ByVal ws As Worksheet, _
+    ByVal fila As Long)
+
+
+    Dim nombreReviso As String
+
+
+    nombreReviso = _
+        Trim$( _
+            UCase$( _
+                CStr( _
+                    ws.Cells( _
+                        fila, _
+                        COLUMNA_REVISO).Value)))
+
+
+    If nombreReviso <> "" Then
+
+        ActualizarListaReviso _
+            nombreReviso
+
+    End If
+
 
 End Sub
 
@@ -406,7 +962,9 @@ End Sub
 Private Sub ActualizarListaReviso( _
     ByVal nombreNuevo As String)
 
+
     Dim ws As Worksheet
+
     Dim celda As Range
 
     Dim formulaActual As String
@@ -416,27 +974,44 @@ Private Sub ActualizarListaReviso( _
     Dim nombres As Variant
 
     Dim i As Long
+
     Dim existe As Boolean
+
 
     On Error GoTo Salir
 
-    nombreNuevo = _
-        Trim(UCase(nombreNuevo))
 
-    If nombreNuevo = "" Then Exit Sub
+    nombreNuevo = _
+        Trim$( _
+            UCase$(nombreNuevo))
+
+
+    If nombreNuevo = "" Then
+
+        Exit Sub
+
+    End If
+
 
     Set ws = _
-        ThisWorkbook.Worksheets("REGISTRAR")
+        ThisWorkbook.Worksheets( _
+            HOJA_REGISTRAR)
+
 
     '====================================================
     ' REVISO = AJ
     '====================================================
 
-    Set celda = ws.Range("AJ9")
+    Set celda = _
+        ws.Range("AJ9")
+
 
     On Error Resume Next
 
-    If celda.Validation.Type <> xlValidateList Then
+
+    If celda.Validation.Type <> _
+       xlValidateList Then
+
 
         On Error GoTo 0
 
@@ -444,58 +1019,85 @@ Private Sub ActualizarListaReviso( _
 
     End If
 
+
     formulaActual = _
         celda.Validation.Formula1
 
+
     On Error GoTo Salir
 
+
     '====================================================
-    ' OBTENER LISTA ACTUAL
+    ' SI LA LISTA VIENE DE UN RANGO, NO MODIFICAR
     '====================================================
 
-    If Left(formulaActual, 1) = "=" Then
+    If Left$( _
+        formulaActual, _
+        1) = "=" Then
+
 
         Exit Sub
 
     End If
 
-    listaActual = formulaActual
+
+    listaActual = _
+        formulaActual
+
 
     '====================================================
     ' SEPARAR NOMBRES
     '====================================================
 
-    nombres = Split( _
-        listaActual, _
-        "," _
-    )
+    nombres = _
+        Split( _
+            listaActual, _
+            ",")
+
 
     '====================================================
     ' COMPROBAR SI YA EXISTE
     '====================================================
 
-    For i = LBound(nombres) To UBound(nombres)
+    For i = _
+        LBound(nombres) To _
+        UBound(nombres)
 
-        If Trim(UCase( _
-            CStr(nombres(i)) _
-        )) = nombreNuevo Then
+
+        If Trim$( _
+            UCase$( _
+                CStr( _
+                    nombres(i)))) = _
+            nombreNuevo Then
+
 
             existe = True
 
             Exit For
 
+
         End If
+
 
     Next i
 
-    If existe Then Exit Sub
+
+    If existe Then
+
+        Exit Sub
+
+    End If
+
 
     '====================================================
     ' AGREGAR NOMBRE
     '====================================================
 
     nuevaLista = _
-        listaActual & "," & nombreNuevo
+        listaActual & _
+        "," & _
+        nombreNuevo
+
 
     '====================================================
     ' ACTUALIZAR DESPLEGABLE
@@ -504,30 +1106,37 @@ Private Sub ActualizarListaReviso( _
     For Each celda In _
         ws.Range("AJ9:AJ5000")
 
+
         With celda.Validation
-        
+
+
             .Delete
-        
+
+
             .Add _
                 Type:=xlValidateList, _
                 AlertStyle:=xlValidAlertStop, _
                 Operator:=xlBetween, _
                 Formula1:=nuevaLista
-        
+
+
             .IgnoreBlank = True
+
             .InCellDropdown = True
+
             .ShowInput = True
-        
-            'IMPORTANTE:
-            'PERMITE ESCRIBIR UN NOMBRE QUE
-            'TODAVÍA NO ESTÁ EN LA LISTA
+
             .ShowError = False
-        
+
+
         End With
+
 
     Next celda
 
+
 Salir:
+
 
 End Sub
 
@@ -538,6 +1147,7 @@ End Sub
 
 Private Function ConvertirValorSQL( _
     ByVal valor As Variant) As String
+
 
     '----------------------------------------------------
     ' ERROR
@@ -551,8 +1161,9 @@ Private Function ConvertirValorSQL( _
 
     End If
 
+
     '----------------------------------------------------
-    ' VACÍO
+    ' VACIO
     '----------------------------------------------------
 
     If IsEmpty(valor) Then
@@ -563,11 +1174,14 @@ Private Function ConvertirValorSQL( _
 
     End If
 
+
     '----------------------------------------------------
-    ' TEXTO VACÍO
+    ' TEXTO VACIO
     '----------------------------------------------------
 
-    If Trim(CStr(valor)) = "" Then
+    If Trim$( _
+        CStr(valor)) = "" Then
+
 
         ConvertirValorSQL = "NULL"
 
@@ -575,40 +1189,47 @@ Private Function ConvertirValorSQL( _
 
     End If
 
+
     '----------------------------------------------------
     ' FECHA
     '----------------------------------------------------
 
     If IsDate(valor) Then
 
+
         ConvertirValorSQL = _
             "#" & _
             Format( _
                 CDate(valor), _
-                "yyyy\/mm\/dd" _
-            ) & _
+                "yyyy\/mm\/dd") & _
             "#"
+
 
         Exit Function
 
+
     End If
 
+
     '----------------------------------------------------
-    ' NÚMERO
+    ' NUMERO
     '----------------------------------------------------
 
     If IsNumeric(valor) Then
+
 
         ConvertirValorSQL = _
             Replace( _
                 CStr(valor), _
                 ",", _
-                "." _
-            )
+                ".")
+
 
         Exit Function
 
+
     End If
+
 
     '----------------------------------------------------
     ' TEXTO
@@ -619,11 +1240,9 @@ Private Function ConvertirValorSQL( _
         Replace( _
             CStr(valor), _
             "'", _
-            "''" _
-        ) & _
+            "''") & _
         "'"
 
+
 End Function
-
-
 
