@@ -1,0 +1,446 @@
+Option Explicit
+
+'==========================================================
+' EXPORTAR BASE DE ACCESS A EXCEL
+'
+' TABLA:
+'   AHORRO_SOLIDARIO
+'
+' ARCHIVO GENERADO:
+'   baseExpo(fecha).xlsx
+'
+' EJEMPLO:
+'   baseExpo(25-08-2026).xlsx
+'
+' EL ARCHIVO CONTIENE:
+'   - TODOS LOS CAMPOS
+'   - TODOS LOS REGISTROS
+'   - INCLUYENDO EL ID
+'
+' NO EXPORTA FORMULAS NI DROPDOWNS.
+' EXPORTA DIRECTAMENTE LOS DATOS DE ACCESS.
+'
+'==========================================================
+
+Public Sub ExportarBaseAccess()
+
+    Dim cn As Object
+    Dim rs As Object
+
+    Dim wbExpo As Workbook
+    Dim wsExpo As Worksheet
+
+    Dim ruta As String
+    Dim nombreArchivo As String
+    Dim archivoCompleto As String
+
+    Dim fila As Long
+    Dim columna As Long
+
+    Dim fechaArchivo As String
+    Dim valor As Variant
+
+    Dim cantidadRegistros As Long
+    Dim cantidadCampos As Long
+
+    Dim respuesta As VbMsgBoxResult
+
+    Dim i As Long
+
+
+    On Error GoTo ErrorHandler
+
+
+    '======================================================
+    ' COMPROBAR QUE EL ARCHIVO PRINCIPAL ESTE GUARDADO
+    '======================================================
+
+    If ThisWorkbook.Path = "" Then
+
+        MsgBox _
+            "Primero debes guardar el archivo de Excel." & _
+            vbCrLf & vbCrLf & _
+            "El archivo exportado se guardará en la misma carpeta.", _
+            vbExclamation, _
+            "EXPORTAR BASE"
+
+        Exit Sub
+
+    End If
+
+
+    '======================================================
+    ' CONFIRMAR EXPORTACION
+    '======================================================
+
+    respuesta = _
+        MsgBox( _
+            "Se exportará toda la información de la base de datos." & _
+            vbCrLf & vbCrLf & _
+            "Tabla: AHORRO_SOLIDARIO" & _
+            vbCrLf & _
+            "Destino: misma carpeta del archivo actual." & _
+            vbCrLf & vbCrLf & _
+            "¿Deseas continuar?", _
+            vbYesNo + _
+            vbQuestion + _
+            vbDefaultButton1, _
+            "EXPORTAR BASE")
+
+
+    If respuesta <> vbYes Then
+
+        Exit Sub
+
+    End If
+
+
+    '======================================================
+    ' DESACTIVAR EXCEL
+    '======================================================
+
+    Application.ScreenUpdating = False
+
+    Application.EnableEvents = False
+
+    Application.DisplayAlerts = False
+
+    Application.StatusBar = _
+        "Preparando exportación..."
+
+
+    '======================================================
+    ' ABRIR CONEXION A ACCESS
+    '
+    ' UTILIZA LA MISMA FUNCION QUE YA TIENES
+    ' EN TU PROYECTO.
+    '======================================================
+
+    Set cn = AbrirConexionAccess()
+
+
+    If cn Is Nothing Then
+
+        GoTo Salir
+
+    End If
+
+
+    '======================================================
+    ' CONSULTAR TODA LA TABLA
+    '======================================================
+
+    Set rs = _
+        cn.Execute( _
+            "SELECT * FROM [AHORRO_SOLIDARIO]")
+
+
+    '======================================================
+    ' COMPROBAR SI HAY DATOS
+    '======================================================
+
+    If rs.EOF Then
+
+        MsgBox _
+            "La tabla AHORRO_SOLIDARIO no contiene registros.", _
+            vbInformation, _
+            "EXPORTAR BASE"
+
+        GoTo Salir
+
+    End If
+
+
+    '======================================================
+    ' CREAR NUEVO LIBRO DE EXCEL
+    '======================================================
+
+    Set wbExpo = _
+        Workbooks.Add(xlWBATWorksheet)
+
+
+    Set wsExpo = _
+        wbExpo.Worksheets(1)
+
+
+    wsExpo.Name = "AHORRO_SOLIDARIO"
+
+
+    '======================================================
+    ' ESCRIBIR ENCABEZADOS
+    '======================================================
+
+    cantidadCampos = rs.Fields.Count
+
+
+    For columna = 0 To cantidadCampos - 1
+
+        wsExpo.Cells(1, columna + 1).Value = _
+            rs.Fields(columna).Name
+
+    Next columna
+
+
+    '======================================================
+    ' ESCRIBIR DATOS
+    '======================================================
+
+    fila = 2
+
+    cantidadRegistros = 0
+
+
+    Do While Not rs.EOF
+
+
+        For columna = 0 To cantidadCampos - 1
+
+
+            If IsNull( _
+                rs.Fields(columna).Value) Then
+
+                valor = ""
+
+            Else
+
+                valor = _
+                    rs.Fields(columna).Value
+
+            End If
+
+
+            If IsError(valor) Then
+
+                wsExpo.Cells( _
+                    fila, _
+                    columna + 1).Value = ""
+
+            Else
+
+                wsExpo.Cells( _
+                    fila, _
+                    columna + 1).Value = valor
+
+            End If
+
+
+        Next columna
+
+
+        cantidadRegistros = _
+            cantidadRegistros + 1
+
+
+        fila = fila + 1
+
+
+        '--------------------------------------------------
+        ' ACTUALIZAR ESTADO
+        '--------------------------------------------------
+
+        If cantidadRegistros Mod 100 = 0 Then
+
+            Application.StatusBar = _
+                "Exportando registro " & _
+                cantidadRegistros & "..."
+
+            DoEvents
+
+        End If
+
+
+        rs.MoveNext
+
+
+    Loop
+
+
+    '======================================================
+    ' FORMATO BASICO
+    '
+    ' SOLO PARA FACILITAR LA LECTURA.
+    ' NO MODIFICA LOS DATOS.
+    '======================================================
+
+    With wsExpo
+
+        .Rows(1).Font.Bold = True
+
+        .Rows(1).AutoFilter
+
+        .Cells.EntireColumn.AutoFit
+
+    End With
+
+
+    '======================================================
+    ' GENERAR NOMBRE
+    '
+    ' EJEMPLO:
+    '
+    ' baseExpo(25-08-2026).xlsx
+    '======================================================
+
+    fechaArchivo = _
+        Format(Date, "dd-mm-yyyy")
+
+
+    nombreArchivo = _
+        "baseExpo(" & _
+        fechaArchivo & _
+        ").xlsx"
+
+
+    ruta = _
+        ThisWorkbook.Path & "\"
+
+
+    archivoCompleto = _
+        ruta & nombreArchivo
+
+
+    '======================================================
+    ' SI YA EXISTE, CREAR NOMBRE ALTERNATIVO
+    '
+    ' baseExpo(25-08-2026).xlsx
+    ' baseExpo(25-08-2026)_1.xlsx
+    ' baseExpo(25-08-2026)_2.xlsx
+    '======================================================
+
+    i = 1
+
+
+    Do While Dir(archivoCompleto) <> ""
+
+        archivoCompleto = _
+            ruta & _
+            "baseExpo(" & _
+            fechaArchivo & _
+            ")_" & _
+            i & _
+            ".xlsx"
+
+
+        i = i + 1
+
+    Loop
+
+
+    '======================================================
+    ' GUARDAR XLSX
+    '======================================================
+
+    Application.StatusBar = _
+        "Guardando archivo..."
+
+
+    wbExpo.SaveAs _
+        Filename:=archivoCompleto, _
+        FileFormat:=xlOpenXMLWorkbook
+
+
+    '======================================================
+    ' CERRAR ARCHIVO EXPORTADO
+    '======================================================
+
+    wbExpo.Close _
+        SaveChanges:=False
+
+
+    Set wbExpo = Nothing
+
+    Set wsExpo = Nothing
+
+
+    '======================================================
+    ' MENSAJE FINAL
+    '======================================================
+
+    MsgBox _
+        "EXPORTACION COMPLETADA CORRECTAMENTE." & _
+        vbCrLf & vbCrLf & _
+        "Registros exportados: " & _
+        cantidadRegistros & _
+        vbCrLf & _
+        "Campos exportados: " & _
+        cantidadCampos & _
+        vbCrLf & vbCrLf & _
+        "Archivo:" & _
+        vbCrLf & _
+        nombreArchivo & _
+        vbCrLf & vbCrLf & _
+        "Ubicación:" & _
+        vbCrLf & _
+        ruta, _
+        vbInformation, _
+        "EXPORTAR BASE"
+
+
+Salir:
+
+    On Error Resume Next
+
+
+    If Not rs Is Nothing Then
+
+        rs.Close
+
+    End If
+
+
+    If Not cn Is Nothing Then
+
+        cn.Close
+
+    End If
+
+
+    Set rs = Nothing
+
+    Set cn = Nothing
+
+
+    Application.StatusBar = False
+
+    Application.DisplayAlerts = True
+
+    Application.EnableEvents = True
+
+    Application.ScreenUpdating = True
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    On Error Resume Next
+
+
+    If Not wbExpo Is Nothing Then
+
+        wbExpo.Close _
+            SaveChanges:=False
+
+    End If
+
+
+    Application.StatusBar = False
+
+    Application.DisplayAlerts = True
+
+    Application.EnableEvents = True
+
+    Application.ScreenUpdating = True
+
+
+    MsgBox _
+        "ERROR AL EXPORTAR LA BASE." & _
+        vbCrLf & vbCrLf & _
+        "Número: " & Err.Number & _
+        vbCrLf & _
+        "Descripción: " & Err.Description, _
+        vbCritical, _
+        "ERROR DE EXPORTACION"
+
+
+End Sub
