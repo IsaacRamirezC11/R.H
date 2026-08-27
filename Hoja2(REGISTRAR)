@@ -1,0 +1,167 @@
+Option Explicit
+
+Private Sub Worksheet_Change(ByVal Target As Range)
+
+    Dim rango As Range
+    Dim celda As Range
+    Dim texto As String
+
+    On Error GoTo Salir
+
+    '====================================================
+    ' EVITAR QUE EL EVENTO SE EJECUTE INFINITAMENTE
+    '====================================================
+
+    Application.EnableEvents = False
+
+
+    '====================================================
+    ' RFC
+    '
+    ' COLUMNA A
+    ' MÁXIMO 10 CARACTERES
+    ' CONVERTIR A MAYÚSCULAS
+    '====================================================
+
+    Set rango = _
+        Intersect( _
+            Target, _
+            Me.Range("A9:A5000") _
+        )
+
+    If Not rango Is Nothing Then
+
+        For Each celda In rango
+
+            If Not IsError(celda.Value) Then
+
+                texto = _
+                    Trim(CStr(celda.Value))
+
+                If Len(texto) > 10 Then
+
+                    MsgBox _
+                        "EL RFC NO PUEDE TENER MÁS DE 10 CARACTERES.", _
+                        vbExclamation, _
+                        "RFC NO VÁLIDO"
+
+                    celda.ClearContents
+
+                Else
+
+                    celda.Value = _
+                        UCase(texto)
+
+                End If
+
+            End If
+
+        Next celda
+
+    End If
+
+
+    '====================================================
+    ' HOM
+    '
+    ' COLUMNA C
+    ' MÁXIMO 3 CARACTERES
+    ' CONVERTIR A MAYÚSCULAS
+    '====================================================
+
+    Set rango = _
+        Intersect( _
+            Target, _
+            Me.Range("C9:C5000") _
+        )
+
+    If Not rango Is Nothing Then
+
+        For Each celda In rango
+
+            If Not IsError(celda.Value) Then
+
+                texto = _
+                    Trim(CStr(celda.Value))
+
+                If Len(texto) > 3 Then
+
+                    MsgBox _
+                        "HOM NO PUEDE TENER MÁS DE 3 CARACTERES.", _
+                        vbExclamation, _
+                        "HOM NO VÁLIDO"
+
+                    celda.ClearContents
+
+                Else
+
+                    celda.Value = _
+                        UCase(texto)
+
+                End If
+
+            End If
+
+        Next celda
+
+    End If
+
+
+    '====================================================
+    ' CURP
+    '
+    ' COLUMNA G
+    ' MÁXIMO 18 CARACTERES
+    ' CONVERTIR A MAYÚSCULAS
+    '====================================================
+
+    Set rango = _
+        Intersect( _
+            Target, _
+            Me.Range("G9:G5000") _
+        )
+
+    If Not rango Is Nothing Then
+
+        For Each celda In rango
+
+            If Not IsError(celda.Value) Then
+
+                texto = _
+                    Trim(CStr(celda.Value))
+
+                If Len(texto) > 18 Then
+
+                    MsgBox _
+                        "LA CURP NO PUEDE TENER MÁS DE 18 CARACTERES.", _
+                        vbExclamation, _
+                        "CURP NO VÁLIDA"
+
+                    celda.ClearContents
+
+                Else
+
+                    celda.Value = _
+                        UCase(texto)
+
+                End If
+
+            End If
+
+        Next celda
+
+    End If
+
+
+Salir:
+
+    '====================================================
+    ' VOLVER A ACTIVAR EVENTOS
+    '====================================================
+
+    Application.EnableEvents = True
+
+End Sub
+
+
+
