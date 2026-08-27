@@ -1,0 +1,301 @@
+Option Explicit
+
+'==========================================================
+' MODRESULTADOANALISIS
+'
+' RESULTADO_ANALISIS YA NO ES UN DROPDOWN.
+'
+' Se calcula automáticamente:
+'
+' =SI(R>=Q,"APLICAR AHORRO","AUN NO SE PUEDE APLICAR AHORRO")
+'
+'==========================================================
+
+
+Private Const FILA_ENCABEZADOS As Long = 8
+Private Const FILA_INICIO As Long = 9
+Private Const FILA_FINAL As Long = 5000
+
+
+'==========================================================
+' PREPARAR RESULTADO_ANALISIS EN AMBAS HOJAS
+'==========================================================
+
+Public Sub PrepararResultadoAnalisis()
+
+    On Error GoTo ErrorHandler
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+
+    '======================================================
+    ' REGISTRAR
+    '======================================================
+
+    PrepararHojaResultado _
+        ThisWorkbook.Worksheets("REGISTRAR")
+
+
+    '======================================================
+    ' MODIFICAR
+    '======================================================
+
+    PrepararHojaResultado _
+        ThisWorkbook.Worksheets("MODIFICAR")
+
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+
+    MsgBox _
+        "RESULTADO_ANALISIS fue configurado correctamente." & _
+        vbCrLf & vbCrLf & _
+        "Se eliminó el dropdown y se colocó la fórmula " & _
+        "automática en REGISTRAR y MODIFICAR.", _
+        vbInformation, _
+        "RESULTADO_ANALISIS"
+
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+
+    MsgBox _
+        "ERROR AL PREPARAR RESULTADO_ANALISIS." & _
+        vbCrLf & vbCrLf & _
+        "Error " & Err.Number & ":" & _
+        vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+End Sub
+
+
+'==========================================================
+' PREPARAR UNA HOJA
+'==========================================================
+
+Private Sub PrepararHojaResultado( _
+    ByVal ws As Worksheet)
+
+    Dim colResultado As Long
+    Dim rng As Range
+
+
+    '======================================================
+    ' BUSCAR ENCABEZADO
+    '======================================================
+
+    colResultado = _
+        BuscarColumnaResultado(ws)
+
+
+    If colResultado = 0 Then
+
+        Err.Raise _
+            vbObjectError + 1000, _
+            , _
+            "No se encontró RESULTADO_ANALISIS en la hoja " & _
+            ws.Name & "."
+
+    End If
+
+
+    '======================================================
+    ' RANGO
+    '======================================================
+
+    Set rng = _
+        ws.Range( _
+            ws.Cells(FILA_INICIO, colResultado), _
+            ws.Cells(FILA_FINAL, colResultado))
+
+
+    '======================================================
+    ' ELIMINAR DROPDOWN / VALIDACION
+    '======================================================
+
+    On Error Resume Next
+
+    rng.Validation.Delete
+
+    On Error GoTo 0
+
+
+    '======================================================
+    ' COLOCAR FORMULA
+    '
+    ' Q = FECHA_APLICAR_AHORRO
+    ' R = FECHA_HOY
+    '
+    ' RESULTADO_ANALISIS:
+    '
+    ' SI R >= Q:
+    '       APLICAR AHORRO
+    '
+    ' SI NO:
+    '       AUN NO SE PUEDE APLICAR AHORRO
+    '======================================================
+
+    ws.Cells( _
+        FILA_INICIO, _
+        colResultado).FormulaLocal = _
+        "=SI(R9>=Q9,""APLICAR AHORRO"",""AUN NO SE PUEDE APLICAR AHORRO"")"
+
+
+    '======================================================
+    ' COPIAR FORMULA HASTA FILA 5000
+    '======================================================
+
+    ws.Range( _
+        ws.Cells(FILA_INICIO, colResultado), _
+        ws.Cells(FILA_FINAL, colResultado)).FillDown
+
+
+End Sub
+
+
+'==========================================================
+' BUSCAR RESULTADO_ANALISIS
+'==========================================================
+
+Private Function BuscarColumnaResultado( _
+    ByVal ws As Worksheet) As Long
+
+    Dim ultimaColumna As Long
+
+    Dim c As Long
+
+    Dim encabezado As String
+
+
+    ultimaColumna = _
+        ws.Cells( _
+            FILA_ENCABEZADOS, _
+            ws.Columns.Count).End(xlToLeft).Column
+
+
+    For c = 1 To ultimaColumna
+
+        encabezado = _
+            UCase$( _
+                Trim$( _
+                    CStr( _
+                        ws.Cells( _
+                            FILA_ENCABEZADOS, _
+                            c).Value)))
+
+
+        If encabezado = "RESULTADO_ANALISIS" Then
+
+            BuscarColumnaResultado = c
+
+            Exit Function
+
+        End If
+
+    Next c
+
+
+    BuscarColumnaResultado = 0
+
+End Function
+
+
+'==========================================================
+' RESTAURAR FORMULA EN REGISTRAR
+'
+' Puedes usar esta macro después de limpiar REGISTRAR.
+'==========================================================
+
+Public Sub RestaurarFormulaResultadoRegistrar()
+
+    On Error GoTo ErrorHandler
+
+    Application.EnableEvents = False
+
+    PrepararHojaResultado _
+        ThisWorkbook.Worksheets("REGISTRAR")
+
+    Application.EnableEvents = True
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.EnableEvents = True
+
+    MsgBox _
+        "ERROR AL RESTAURAR RESULTADO_ANALISIS EN REGISTRAR." & _
+        vbCrLf & vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+End Sub
+
+
+'==========================================================
+' RESTAURAR FORMULA EN MODIFICAR
+'
+' Puedes usar esta macro después de limpiar MODIFICAR.
+'==========================================================
+
+Public Sub RestaurarFormulaResultadoModificar()
+
+    On Error GoTo ErrorHandler
+
+    Application.EnableEvents = False
+
+    PrepararHojaResultado _
+        ThisWorkbook.Worksheets("MODIFICAR")
+
+    Application.EnableEvents = True
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.EnableEvents = True
+
+    MsgBox _
+        "ERROR AL RESTAURAR RESULTADO_ANALISIS EN MODIFICAR." & _
+        vbCrLf & vbCrLf & _
+        Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+End Sub
+
+
+'==========================================================
+' REACTIVAR EXCEL
+'==========================================================
+
+Public Sub ReactivarExcel()
+
+    Application.EnableEvents = True
+
+    Application.ScreenUpdating = True
+
+    Application.StatusBar = False
+
+    Application.Calculation = xlCalculationAutomatic
+
+
+    MsgBox _
+        "Excel fue reactivado correctamente.", _
+        vbInformation, _
+        "EXCEL"
+
+End Sub
