@@ -1,0 +1,467 @@
+Option Explicit
+
+'==========================================================
+' MODCB
+'
+' CONFIGURA C_B EN:
+'
+'   REGISTRAR
+'   MODIFICAR
+'
+' VALORES PERMITIDOS:
+'
+'   0
+'   1
+'   2
+'   P
+'   P1
+'   P2
+'   P3
+'   P4
+'   P5
+'   P6
+'   P7
+'   P8
+'   P9
+'   P10
+'
+' P1-P10 TAMBIEN CAMBIAN DE COLOR AUTOMATICAMENTE.
+'
+'==========================================================
+
+
+Private Const FILA_ENCABEZADOS As Long = 8
+
+Private Const FILA_INICIO As Long = 9
+
+Private Const FILA_FINAL As Long = 5000
+
+
+'==========================================================
+' MACRO PRINCIPAL
+'==========================================================
+
+Public Sub ConfigurarCB()
+
+    On Error GoTo ErrorHandler
+
+
+    Application.ScreenUpdating = False
+
+    Application.EnableEvents = False
+
+
+    '======================================================
+    ' REGISTRAR
+    '======================================================
+
+    ConfigurarHojaCB _
+        ThisWorkbook.Worksheets("REGISTRAR")
+
+
+    '======================================================
+    ' MODIFICAR
+    '======================================================
+
+    ConfigurarHojaCB _
+        ThisWorkbook.Worksheets("MODIFICAR")
+
+
+    Application.EnableEvents = True
+
+    Application.ScreenUpdating = True
+
+
+    MsgBox _
+        "C_B fue configurado correctamente en REGISTRAR y MODIFICAR." & _
+        vbCrLf & vbCrLf & _
+        "Valores permitidos:" & _
+        vbCrLf & _
+        "0, 1, 2, P, P1, P2, P3, P4, P5, P6, P7, P8, P9 y P10." & _
+        vbCrLf & vbCrLf & _
+        "Los códigos P1-P10 tienen formato de color automático.", _
+        vbInformation, _
+        "C_B"
+
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.EnableEvents = True
+
+    Application.ScreenUpdating = True
+
+
+    MsgBox _
+        "ERROR AL CONFIGURAR C_B." & _
+        vbCrLf & vbCrLf & _
+        "Número: " & Err.Number & _
+        vbCrLf & _
+        "Descripción: " & Err.Description, _
+        vbCritical, _
+        "ERROR"
+
+End Sub
+
+
+'==========================================================
+' CONFIGURAR UNA HOJA
+'==========================================================
+
+Private Sub ConfigurarHojaCB( _
+    ByVal ws As Worksheet)
+
+    Dim colCB As Long
+
+    Dim rng As Range
+
+    Dim lista As String
+
+
+    '======================================================
+    ' BUSCAR C_B
+    '======================================================
+
+    colCB = _
+        BuscarColumnaCB(ws)
+
+
+    If colCB = 0 Then
+
+        Err.Raise _
+            vbObjectError + 2000, _
+            , _
+            "No se encontró el encabezado C_B en la hoja " & _
+            ws.Name & "."
+
+    End If
+
+
+    '======================================================
+    ' RANGO C_B
+    '======================================================
+
+    Set rng = _
+        ws.Range( _
+            ws.Cells(FILA_INICIO, colCB), _
+            ws.Cells(FILA_FINAL, colCB))
+
+
+    '======================================================
+    ' LISTA DEL DROPDOWN
+    '======================================================
+
+    lista = _
+        "0,1,2,P,P1,P2,P3,P4,P5,P6,P7,P8,P9,P10"
+
+
+    '======================================================
+    ' ELIMINAR VALIDACION ANTERIOR
+    '======================================================
+
+    On Error Resume Next
+
+    rng.Validation.Delete
+
+    On Error GoTo 0
+
+
+    '======================================================
+    ' CREAR NUEVO DROPDOWN
+    '======================================================
+
+    With rng.Validation
+
+        .Add _
+            Type:=xlValidateList, _
+            AlertStyle:=xlValidAlertStop, _
+            Operator:=xlBetween, _
+            Formula1:=lista
+
+        .IgnoreBlank = True
+
+        .InCellDropdown = True
+
+        .ShowInput = True
+
+        .ShowError = True
+
+        .InputTitle = "C_B"
+
+        .InputMessage = _
+            "Selecciona un valor de la lista."
+
+        .ErrorTitle = "VALOR NO VÁLIDO"
+
+        .ErrorMessage = _
+            "C_B solo permite: 0, 1, 2, P, P1, P2, P3, P4, P5, P6, P7, P8, P9 y P10."
+
+    End With
+
+
+    '======================================================
+    ' CONFIGURAR COLORES
+    '======================================================
+
+    ConfigurarColoresCB _
+        ws, _
+        rng
+
+End Sub
+
+
+'==========================================================
+' COLORES P1-P10
+'==========================================================
+
+Private Sub ConfigurarColoresCB( _
+    ByVal ws As Worksheet, _
+    ByVal rng As Range)
+
+    Dim i As Long
+
+    Dim codigo As String
+
+
+    '======================================================
+    ' ELIMINAR REGLAS ANTERIORES
+    '======================================================
+
+    rng.FormatConditions.Delete
+
+
+    '======================================================
+    ' P1
+    '
+    ' NO REGISTRO SIRI-SINAVID
+    ' AMARILLO / NARANJA
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P1", _
+        RGB(255, 192, 0), _
+        RGB(0, 0, 0)
+
+
+    '======================================================
+    ' P2
+    '
+    ' PENDIENTES
+    ' BEIGE / GRIS
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P2", _
+        RGB(204, 194, 168), _
+        RGB(0, 0, 0)
+
+
+    '======================================================
+    ' P3
+    '
+    ' SIN REGIMEN ISSSTE
+    ' MORADO
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P3", _
+        RGB(190, 130, 210), _
+        RGB(0, 0, 0)
+
+
+    '======================================================
+    ' P4
+    '
+    ' NO DAR DE BAJA EN SARH
+    ' ROSA
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P4", _
+        RGB(225, 180, 220), _
+        RGB(0, 0, 0)
+
+
+    '======================================================
+    ' P5
+    '
+    ' DECIMO TRANSITORIO
+    ' ROJO
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P5", _
+        RGB(255, 0, 0), _
+        RGB(0, 0, 0)
+
+
+    '======================================================
+    ' P6
+    '
+    ' ROSA
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P6", _
+        RGB(245, 145, 195), _
+        RGB(0, 0, 0)
+
+
+    '======================================================
+    ' P7
+    '
+    ' AZUL
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P7", _
+        RGB(0, 112, 192), _
+        RGB(0, 0, 0)
+
+
+    '======================================================
+    ' P8
+    '
+    ' AMARILLO
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P8", _
+        RGB(255, 255, 0), _
+        RGB(0, 0, 0)
+
+
+    '======================================================
+    ' P9
+    '
+    ' VERDE
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P9", _
+        RGB(0, 176, 80), _
+        RGB(0, 0, 0)
+
+
+    '======================================================
+    ' P10
+    '
+    ' AZUL CLARO
+    '======================================================
+
+    AgregarColor _
+        rng, _
+        "P10", _
+        RGB(0, 176, 240), _
+        RGB(0, 0, 0)
+
+End Sub
+
+
+'==========================================================
+' AGREGAR REGLA DE COLOR
+'==========================================================
+
+Private Sub AgregarColor( _
+    ByVal rng As Range, _
+    ByVal codigo As String, _
+    ByVal colorFondo As Long, _
+    ByVal colorTexto As Long)
+
+    Dim regla As FormatCondition
+
+
+    Set regla = _
+        rng.FormatConditions.Add( _
+            Type:=xlCellValue, _
+            Operator:=xlEqual, _
+            Formula1:="=""" & codigo & """")
+
+
+    regla.Interior.Color = colorFondo
+
+    regla.Font.Color = colorTexto
+
+End Sub
+
+
+'==========================================================
+' BUSCAR COLUMNA C_B
+'==========================================================
+
+Private Function BuscarColumnaCB( _
+    ByVal ws As Worksheet) As Long
+
+    Dim ultimaColumna As Long
+
+    Dim c As Long
+
+    Dim encabezado As String
+
+
+    ultimaColumna = _
+        ws.Cells( _
+            FILA_ENCABEZADOS, _
+            ws.Columns.Count).End(xlToLeft).Column
+
+
+    For c = 1 To ultimaColumna
+
+
+        encabezado = _
+            UCase$( _
+                Trim$( _
+                    CStr( _
+                        ws.Cells( _
+                            FILA_ENCABEZADOS, _
+                            c).Value)))
+
+
+        If encabezado = "C_B" Then
+
+            BuscarColumnaCB = c
+
+            Exit Function
+
+        End If
+
+
+    Next c
+
+
+    BuscarColumnaCB = 0
+
+End Function
+
+
+'==========================================================
+' REACTIVAR EXCEL
+'==========================================================
+
+Public Sub ReactivarExcelCB()
+
+    Application.EnableEvents = True
+
+    Application.ScreenUpdating = True
+
+    Application.StatusBar = False
+
+
+    MsgBox _
+        "Excel fue reactivado correctamente.", _
+        vbInformation, _
+        "EXCEL"
+
+End Sub
+
