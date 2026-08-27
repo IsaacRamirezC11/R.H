@@ -1,1824 +1,593 @@
 Option Explicit
 
-'==========================================================
-' MODIMPORTAR
-'
-' BASE ACCESS:
-'   AhorroSolidario_DEV.accdb
-'
-' TABLA:
-'   AHORRO_SOLIDARIO
-'
-' REGLAS:
-'
-' 1. El Excel externo puede tener los encabezados en
-'    cualquier fila.
-'
-' 2. Se busca automáticamente la fila de encabezados.
-'
-' 3. SOLO se copian campos cuyo encabezado coincida
-'    con un campo de la tabla AHORRO_SOLIDARIO.
-'
-' 4. NO SE CREAN EQUIVALENCIAS.
-'
-' 5. QUINCENA NO se copia a QNA.
-'
-' 6. CICLO NO se copia a AÑO.
-'
-' 7. QUINCENA + CICLO se utilizan únicamente para
-'    determinar si el registro externo es más reciente.
-'
-' 8. Id de Access NO se importa.
-'
-' 9. Los registros se colocan en REGISTRAR.
-'
-'10. REGISTRAR tiene encabezados en fila 8.
-'
-'11. Los datos comienzan en fila 9.
-'
-'12. Access se carga una sola vez para mejorar rendimiento.
-'
-'13. La última importación queda identificada para
-'    poder limpiarla posteriormente.
-'
-'==========================================================
+'========================================================
+' NORMALIZAR IDENTIFICADORES
+'========================================================
+
+Public Function LimpiarIdentificador(ByVal valor As Variant) As String
+
+    Dim texto As String
+
+    If IsNull(valor) Or IsEmpty(valor) Then
+        LimpiarIdentificador = ""
+        Exit Function
+    End If
+
+    texto = CStr(valor)
+
+    texto = Trim(texto)
+    texto = Replace(texto, " ", "")
+    texto = Replace(texto, """", "")
+    texto = Replace(texto, "'", "")
+    texto = Replace(texto, vbCr, "")
+    texto = Replace(texto, vbLf, "")
+
+    texto = UCase(texto)
+
+    LimpiarIdentificador = texto
+
+End Function
 
 
-Private Const HOJA_REGISTRAR As String = "REGISTRAR"
+'========================================================
+' BUSCAR PERSONA
+'========================================================
 
-Private Const TABLA_ACCESS As String = "AHORRO_SOLIDARIO"
-
-Private Const FILA_ENCABEZADOS_REGISTRAR As Long = 8
-
-Private Const FILA_INICIO_REGISTRAR As Long = 9
-
-Private Const FILA_FIN_REGISTRAR As Long = 5000
-
-
-'==========================================================
-' IMPORTAR ARCHIVO
-'==========================================================
-
-Public Sub ImportarArchivoExterno()
-
-    Dim fd As FileDialog
-    Dim ruta As String
-    Dim extension As String
-
-    On Error GoTo ErrorHandler
-
-    Set fd = Application.FileDialog( _
-        msoFileDialogFilePicker)
-
-    With fd
-
-        .Title = "Seleccionar archivo para importar"
-
-        .AllowMultiSelect = False
-
-        .Filters.Clear
-
-        .Filters.Add _
-            "Archivos Excel", _
-            "*.xlsx;*.xls;*.xlsm"
-
-        .Filters.Add _
-            "Archivos PDF", _
-            "*.pdf"
-
-        If .Show <> -1 Then Exit Sub
-
-        ruta = .SelectedItems(1)
-
-    End With
-
-
-    extension = LCase$( _
-        Mid$( _
-            ruta, _
-            InStrRev(ruta, ".") + 1))
-
-
-    Select Case extension
-
-        Case "xlsx", "xls", "xlsm"
-
-            ImportarExcelGrande ruta
-
-        Case "pdf"
-
-            MsgBox _
-                "El archivo seleccionado es PDF." & vbCrLf & vbCrLf & _
-                "La importacion automatica de PDF no esta habilitada " & _
-                "en esta version.", _
-                vbInformation, _
-                "IMPORTAR"
-
-        Case Else
-
-            MsgBox _
-                "El formato seleccionado no es compatible.", _
-                vbExclamation, _
-                "IMPORTAR"
-
-    End Select
-
-    Exit Sub
-
-
-ErrorHandler:
-
-    MsgBox _
-        "ERROR AL SELECCIONAR EL ARCHIVO." & vbCrLf & vbCrLf & _
-        "Numero: " & Err.Number & vbCrLf & _
-        "Descripcion: " & Err.Description, _
-        vbCritical, _
-        "IMPORTAR"
-
-End Sub
-
-
-'==========================================================
-' IMPORTAR EXCEL GRANDE
-'==========================================================
-
-Private Sub ImportarExcelGrande(ByVal ruta As String)
-
-    Dim wb As Workbook
-
-    Dim wsOrigen As Worksheet
-    Dim wsDestino As Worksheet
-
-    Dim ultimaFila As Long
-    Dim ultimaColumna As Long
-
-    Dim filaEncabezados As Long
-
-    Dim mapaExcel As Object
-    Dim mapaAccess As Object
-
-    Dim datosAccessRFC As Object
-    Dim datosAccessCURP As Object
+Public Sub BuscarPersona()
 
     Dim cn As Object
     Dim rs As Object
+    Dim ws As Worksheet
 
-    Dim datos As Variant
-
-    Dim fila As Long
-    Dim col As Long
-
-    Dim filaDestino As Long
-    Dim filaInicioImportacion As Long
-    Dim filaFinImportacion As Long
+    Dim sql As String
+    Dim condiciones As String
 
     Dim rfc As String
+    Dim rfcCompleto As String
     Dim curp As String
 
-    Dim qnaExterna As Long
-    Dim cicloExterno As Long
-
-    Dim qnaAccess As Long
-    Dim cicloAccess As Long
-
-    Dim existe As Boolean
-    Dim esMasReciente As Boolean
-
-    Dim registrosAgregados As Long
-    Dim registrosIgnorados As Long
-
-    Dim ultimaFilaDatos As Long
-
-    Dim encabezado As Variant
-
-    Dim colOrigen As Long
-    Dim colDestino As Long
-
-    Dim valor As Variant
-
-    Dim nombreHoja As String
-
+    Dim cantidad As Long
+    Dim inicio As Double
+    Dim tiempo As Double
 
     On Error GoTo ErrorHandler
 
+    inicio = Timer
 
-    '======================================================
-    ' ACELERAR EXCEL
-    '======================================================
+    Set ws = ThisWorkbook.Worksheets("BUSCAR")
 
-    Application.ScreenUpdating = False
+
+    '====================================================
+    ' LEER CAMPOS
+    '====================================================
+
+    rfc = LimpiarIdentificador(ws.Range("F5").Value)
+
+    rfcCompleto = LimpiarIdentificador(ws.Range("F6").Value)
+
+    curp = LimpiarIdentificador(ws.Range("F7").Value)
+
+
+    '====================================================
+    ' CONVERTIR A MAYÚSCULAS EN EL FORMULARIO
+    '====================================================
+
     Application.EnableEvents = False
-    Application.DisplayAlerts = False
-    Application.Calculation = xlCalculationManual
-    Application.StatusBar = "Preparando importacion..."
 
-
-    '======================================================
-    ' ABRIR ARCHIVO
-    '======================================================
-
-    Set wb = Workbooks.Open( _
-        Filename:=ruta, _
-        UpdateLinks:=False, _
-        ReadOnly:=True)
-
-
-    If wb Is Nothing Then
-
-        Err.Raise _
-            vbObjectError + 5000, _
-            "ImportarExcelGrande", _
-            "No se pudo abrir el archivo."
-
-    End If
-
-
-    '======================================================
-    ' PRIMERA HOJA DEL ARCHIVO
-    '======================================================
-
-    Set wsOrigen = wb.Worksheets(1)
-
-
-    '======================================================
-    ' HOJA REGISTRAR
-    '======================================================
-
-    Set wsDestino = _
-        ThisWorkbook.Worksheets( _
-            HOJA_REGISTRAR)
-
-
-    '======================================================
-    ' DIMENSIONES DEL EXCEL
-    '======================================================
-
-    ObtenerDimensiones _
-        wsOrigen, _
-        ultimaFila, _
-        ultimaColumna
-
-
-    If ultimaFila = 0 Or _
-       ultimaColumna = 0 Then
-
-        Err.Raise _
-            vbObjectError + 5001, _
-            "ImportarExcelGrande", _
-            "El archivo no contiene datos."
-
-    End If
-
-
-    '======================================================
-    ' BUSCAR ENCABEZADOS
-    '======================================================
-
-    Application.StatusBar = _
-        "Buscando fila de encabezados..."
-
-
-    filaEncabezados = _
-        BuscarFilaEncabezados( _
-            wsOrigen, _
-            ultimaFila, _
-            ultimaColumna)
-
-
-    If filaEncabezados = 0 Then
-
-        Err.Raise _
-            vbObjectError + 5002, _
-            "ImportarExcelGrande", _
-            "No se encontro la fila de encabezados." & _
-            vbCrLf & vbCrLf & _
-            "Debe existir al menos RFC y otros campos de identificacion."
-
-    End If
-
-
-    '======================================================
-    ' MAPA DE ENCABEZADOS DEL EXCEL
-    '======================================================
-
-    Set mapaExcel = _
-        CrearMapaEncabezadosExcel( _
-            wsOrigen, _
-            filaEncabezados, _
-            ultimaColumna)
-
-
-    '======================================================
-    ' MAPA DE ENCABEZADOS DE ACCESS
-    '
-    ' SE OBTIENE DIRECTAMENTE DE LA TABLA.
-    '
-    ' ASI NO TENEMOS QUE INVENTAR LOS NOMBRES.
-    '======================================================
-
-    Application.StatusBar = _
-        "Leyendo estructura de Access..."
-
-
-    Set cn = AbrirConexionAccess()
-
-
-    If cn Is Nothing Then
-
-        Err.Raise _
-            vbObjectError + 5003, _
-            "ImportarExcelGrande", _
-            "No se pudo abrir la conexion con Access."
-
-    End If
-
-
-    Set mapaAccess = _
-        ObtenerCamposTablaAccess( _
-            cn, _
-            TABLA_ACCESS)
-
-
-    If mapaAccess.Count = 0 Then
-
-        Err.Raise _
-            vbObjectError + 5004, _
-            "ImportarExcelGrande", _
-            "No se encontraron campos en la tabla " & _
-            TABLA_ACCESS & "."
-
-    End If
-
-
-    '======================================================
-    ' COMPROBAR RFC
-    '======================================================
-
-    If Not mapaExcel.Exists( _
-        "RFC") Then
-
-        Err.Raise _
-            vbObjectError + 5005, _
-            "ImportarExcelGrande", _
-            "El archivo externo no contiene el encabezado RFC."
-
-    End If
-
-
-    If Not mapaAccess.Exists( _
-        "RFC") Then
-
-        Err.Raise _
-            vbObjectError + 5006, _
-            "ImportarExcelGrande", _
-            "La tabla AHORRO_SOLIDARIO no contiene el campo RFC."
-
-    End If
-
-
-    '======================================================
-    ' CARGAR ACCESS EN MEMORIA
-    '
-    ' UNA SOLA CONSULTA.
-    '======================================================
-
-    Application.StatusBar = _
-        "Cargando registros de Access en memoria..."
-
-
-    Set datosAccessRFC = _
-        CreateObject( _
-            "Scripting.Dictionary")
-
-    Set datosAccessCURP = _
-        CreateObject( _
-            "Scripting.Dictionary")
-
-
-    datosAccessRFC.CompareMode = vbTextCompare
-    datosAccessCURP.CompareMode = vbTextCompare
-
-
-    Set rs = _
-        ObtenerRegistrosComparacion( _
-            cn, _
-            TABLA_ACCESS)
-
-
-    If Not rs Is Nothing Then
-
-        Do While Not rs.EOF
-
-            AgregarRegistroAccessMemoria _
-                rs, _
-                datosAccessRFC, _
-                datosAccessCURP
-
-            rs.MoveNext
-
-        Loop
-
-    End If
-
-
-    '======================================================
-    ' CERRAR ACCESS
-    '
-    ' YA TENEMOS TODO EN MEMORIA.
-    '======================================================
-
-    On Error Resume Next
-
-    If Not rs Is Nothing Then rs.Close
-
-    If Not cn Is Nothing Then cn.Close
-
-    Set rs = Nothing
-    Set cn = Nothing
-
-    On Error GoTo ErrorHandler
-
-
-    '======================================================
-    ' PRIMERA FILA LIBRE
-    '======================================================
-
-    filaDestino = _
-        PrimeraFilaLibreRegistrar( _
-            wsDestino, _
-            mapaAccess)
-
-
-    If filaDestino = 0 Then GoTo Salir
-
-
-    '======================================================
-    ' GUARDAR INICIO DE IMPORTACION
-    '======================================================
-
-    filaInicioImportacion = _
-        filaDestino
-
-
-    '======================================================
-    ' LEER EXCEL A MEMORIA
-    '
-    ' ESTO ES MUCHO MAS RAPIDO QUE LEER CELDA POR CELDA.
-    '======================================================
-
-    Application.StatusBar = _
-        "Cargando datos del Excel..."
-
-
-    datos = wsOrigen.Range( _
-        wsOrigen.Cells( _
-            filaEncabezados + 1, _
-            1), _
-        wsOrigen.Cells( _
-            ultimaFila, _
-            ultimaColumna) _
-    ).Value2
-
-
-    ultimaFilaDatos = _
-        UBound(datos, 1)
-
-
-    '======================================================
-    ' RECORRER DATOS EN MEMORIA
-    '======================================================
-
-    For fila = 1 To ultimaFilaDatos
-
-
-        If fila Mod 500 = 0 Then
-
-            Application.StatusBar = _
-                "Procesando registro " & _
-                Format(fila, "#,##0") & _
-                " de " & _
-                Format(ultimaFilaDatos, "#,##0")
-
-        End If
-
-
-        '--------------------------------------------------
-        ' RFC
-        '--------------------------------------------------
-
-        rfc = _
-            ObtenerValorArray( _
-                datos, _
-                fila, _
-                CLng( _
-                    mapaExcel("RFC")))
-
-
-        '--------------------------------------------------
-        ' CURP
-        '--------------------------------------------------
-
-        If mapaExcel.Exists("CURP") Then
-
-            curp = _
-                ObtenerValorArray( _
-                    datos, _
-                    fila, _
-                    CLng( _
-                        mapaExcel("CURP")))
-
-        Else
-
-            curp = ""
-
-        End If
-
-
-        '--------------------------------------------------
-        ' SI NO HAY RFC NI CURP
-        '--------------------------------------------------
-
-        If rfc = "" And curp = "" Then
-
-            registrosIgnorados = _
-                registrosIgnorados + 1
-
-            GoTo SiguienteRegistro
-
-        End If
-
-
-        '==================================================
-        ' OBTENER QUINCENA/CICLO
-        '
-        ' SOLO PARA COMPARAR RECENCIA.
-        '
-        ' NO SE COPIAN A QNA/AÑO.
-        '==================================================
-
-        qnaExterna = 0
-        cicloExterno = 0
-
-
-        If mapaExcel.Exists("QUINCENA") Then
-
-            qnaExterna = _
-                NumeroSeguro( _
-                    ObtenerValorArray( _
-                        datos, _
-                        fila, _
-                        CLng( _
-                            mapaExcel("QUINCENA"))))
-
-        End If
-
-
-        If mapaExcel.Exists("CICLO") Then
-
-            cicloExterno = _
-                NumeroSeguro( _
-                    ObtenerValorArray( _
-                        datos, _
-                        fila, _
-                        CLng( _
-                            mapaExcel("CICLO"))))
-
-        End If
-
-
-        '==================================================
-        ' BUSCAR EN MEMORIA
-        '==================================================
-
-        existe = False
-
-        qnaAccess = 0
-        cicloAccess = 0
-
-
-        If rfc <> "" Then
-
-            If datosAccessRFC.Exists(rfc) Then
-
-                existe = True
-
-                ObtenerRecenciaDiccionario _
-                    datosAccessRFC(rfc), _
-                    qnaAccess, _
-                    cicloAccess
-
-            End If
-
-        End If
-
-
-        '--------------------------------------------------
-        ' SI NO ENCONTRO RFC, INTENTAR CURP
-        '--------------------------------------------------
-
-        If Not existe Then
-
-            If curp <> "" Then
-
-                If datosAccessCURP.Exists(curp) Then
-
-                    existe = True
-
-                    ObtenerRecenciaDiccionario _
-                        datosAccessCURP(curp), _
-                        qnaAccess, _
-                        cicloAccess
-
-                End If
-
-            End If
-
-        End If
-
-
-        '==================================================
-        ' DECIDIR
-        '==================================================
-
-        If Not existe Then
-
-            esMasReciente = True
-
-        Else
-
-            esMasReciente = _
-                RegistroExternoEsMasReciente( _
-                    cicloExterno, _
-                    qnaExterna, _
-                    cicloAccess, _
-                    qnaAccess)
-
-        End If
-
-
-        '==================================================
-        ' SI ES NUEVO O MAS RECIENTE
-        '==================================================
-
-        If esMasReciente Then
-
-
-            '------------------------------------------------
-            ' COPIAR SOLO ENCABEZADOS COINCIDENTES
-            '------------------------------------------------
-
-            For Each encabezado In mapaExcel.Keys
-
-
-                If mapaAccess.Exists( _
-                    CStr(encabezado)) Then
-
-
-                    '----------------------------------------
-                    ' ID NUNCA SE IMPORTA
-                    '----------------------------------------
-
-                    If UCase$( _
-                        CStr(encabezado)) <> "ID" Then
-
-
-                        colOrigen = _
-                            CLng( _
-                                mapaExcel( _
-                                    CStr(encabezado)))
-
-
-                        colDestino = _
-                            BuscarColumnaRegistrar( _
-                                wsDestino, _
-                                CStr(encabezado))
-
-
-                        If colDestino > 0 Then
-
-
-                            valor = _
-                                datos(fila, colOrigen)
-
-
-                            If Not IsError(valor) Then
-
-                                wsDestino.Cells( _
-                                    filaDestino, _
-                                    colDestino).Value = _
-                                    valor
-
-                            End If
-
-
-                        End If
-
-
-                    End If
-
-
-                End If
-
-
-            Next encabezado
-
-
-            '------------------------------------------------
-            ' RESTAURAR FORMULAS DE REGISTRAR
-            '------------------------------------------------
-
-            CopiarFormulasFilaAnterior _
-                wsDestino, _
-                filaDestino
-
-
-            filaDestino = _
-                filaDestino + 1
-
-
-            registrosAgregados = _
-                registrosAgregados + 1
-
-
-        Else
-
-            registrosIgnorados = _
-                registrosIgnorados + 1
-
-        End If
-
-
-SiguienteRegistro:
-
-    Next fila
-
-
-    '======================================================
-    ' ULTIMA FILA IMPORTADA
-    '======================================================
-
-    If registrosAgregados > 0 Then
-
-        filaFinImportacion = _
-            filaDestino - 1
-
-
-        GuardarRangoUltimaImportacion _
-            filaInicioImportacion, _
-            filaFinImportacion
-
-    End If
-
-
-    '======================================================
-    ' RESULTADO
-    '======================================================
-
-    MsgBox _
-        "IMPORTACION TERMINADA." & vbCrLf & vbCrLf & _
-        "Registros agregados a REGISTRAR: " & _
-        Format(registrosAgregados, "#,##0") & vbCrLf & _
-        "Registros ignorados: " & _
-        Format(registrosIgnorados, "#,##0") & vbCrLf & vbCrLf & _
-        "Los registros agregados quedaron en REGISTRAR " & _
-        "para revision manual." & vbCrLf & vbCrLf & _
-        "Access NO fue modificado.", _
-        vbInformation, _
-        "IMPORTAR"
-
-
-Salir:
-
-    On Error Resume Next
-
-
-    If Not rs Is Nothing Then rs.Close
-
-    If Not cn Is Nothing Then cn.Close
-
-    If Not wb Is Nothing Then
-
-        wb.Close SaveChanges:=False
-
-    End If
-
-
-    Application.StatusBar = False
-
-    Application.Calculation = xlCalculationAutomatic
-
-    Application.DisplayAlerts = True
+    ws.Range("F5").Value = rfc
+    ws.Range("F6").Value = rfcCompleto
+    ws.Range("F7").Value = curp
 
     Application.EnableEvents = True
 
-    Application.ScreenUpdating = True
 
-
-    Exit Sub
-
-
-ErrorHandler:
-
-    MsgBox _
-        "ERROR DURANTE LA IMPORTACION." & vbCrLf & vbCrLf & _
-        "Numero: " & Err.Number & vbCrLf & _
-        "Descripcion: " & Err.Description, _
-        vbCritical, _
-        "IMPORTAR"
-
-
-    Resume Salir
-
-End Sub
-
-
-'==========================================================
-' BUSCAR FILA DE ENCABEZADOS
-'
-' No importa en que fila este el encabezado.
-'
-' Se identifica RFC + otros encabezados conocidos.
-'==========================================================
-
-Private Function BuscarFilaEncabezados( _
-    ByVal ws As Worksheet, _
-    ByVal ultimaFila As Long, _
-    ByVal ultimaColumna As Long) As Long
-
-
-    Dim f As Long
-    Dim c As Long
-
-    Dim encabezado As String
-
-    Dim tieneRFC As Boolean
-
-    Dim coincidencias As Long
-
-
-    'Buscar solamente en las primeras 100 filas.
-    'Esto evita recorrer miles de filas innecesariamente.
-
-    Dim limite As Long
-
-    limite = ultimaFila
-
-    If limite > 100 Then limite = 100
-
-
-    For f = 1 To limite
-
-
-        tieneRFC = False
-
-        coincidencias = 0
-
-
-        For c = 1 To ultimaColumna
-
-
-            encabezado = _
-                NormalizarEncabezado( _
-                    TextoSeguro( _
-                        ws.Cells( _
-                            f, _
-                            c).Value2))
-
-
-            Select Case encabezado
-
-
-                Case "RFC"
-
-                    tieneRFC = True
-
-                    coincidencias = _
-                        coincidencias + 1
-
-
-                Case "HOM"
-
-                    coincidencias = _
-                        coincidencias + 1
-
-
-                Case "CURP"
-
-                    coincidencias = _
-                        coincidencias + 1
-
-
-                Case "PATERNO"
-
-                    coincidencias = _
-                        coincidencias + 1
-
-
-                Case "MATERNO"
-
-                    coincidencias = _
-                        coincidencias + 1
-
-
-                Case "NOMBRE"
-
-                    coincidencias = _
-                        coincidencias + 1
-
-
-                Case "NIVEL"
-
-                    coincidencias = _
-                        coincidencias + 1
-
-
-                Case "UR"
-
-                    coincidencias = _
-                        coincidencias + 1
-
-
-            End Select
-
-
-        Next c
-
-
-        If tieneRFC And coincidencias >= 2 Then
-
-            BuscarFilaEncabezados = f
-
-            Exit Function
-
-        End If
-
-
-    Next f
-
-
-    BuscarFilaEncabezados = 0
-
-End Function
-
-
-'==========================================================
-' MAPA DE ENCABEZADOS DEL EXCEL
-'==========================================================
-
-Private Function CrearMapaEncabezadosExcel( _
-    ByVal ws As Worksheet, _
-    ByVal filaEncabezados As Long, _
-    ByVal ultimaColumna As Long) As Object
-
-
-    Dim mapa As Object
-
-    Dim c As Long
-
-    Dim encabezado As String
-
-
-    Set mapa = _
-        CreateObject( _
-            "Scripting.Dictionary")
-
-
-    mapa.CompareMode = vbTextCompare
-
-
-    For c = 1 To ultimaColumna
-
-
-        encabezado = _
-            NormalizarEncabezado( _
-                TextoSeguro( _
-                    ws.Cells( _
-                        filaEncabezados, _
-                        c).Value2))
-
-
-        If encabezado <> "" Then
-
-
-            If Not mapa.Exists(encabezado) Then
-
-                mapa.Add _
-                    encabezado, _
-                    c
-
-            End If
-
-
-        End If
-
-
-    Next c
-
-
-    Set CrearMapaEncabezadosExcel = mapa
-
-End Function
-
-
-'==========================================================
-' OBTENER CAMPOS DE ACCESS
-'
-' Lee directamente la estructura de AHORRO_SOLIDARIO.
-'
-' De esta forma no inventamos nombres.
-'==========================================================
-
-Private Function ObtenerCamposTablaAccess( _
-    ByVal cn As Object, _
-    ByVal nombreTabla As String) As Object
-
-
-    Dim mapa As Object
-
-    Dim rsSchema As Object
-
-    Dim nombreCampo As String
-
-
-    Set mapa = _
-        CreateObject( _
-            "Scripting.Dictionary")
-
-
-    mapa.CompareMode = vbTextCompare
-
-
-    On Error GoTo ErrorHandler
-
-
-    Set rsSchema = _
-        cn.OpenSchema( _
-            4, _
-            Array( _
-                Empty, _
-                Empty, _
-                nombreTabla, _
-                Empty))
-
-
-    Do While Not rsSchema.EOF
-
-
-        nombreCampo = _
-            TextoSeguro( _
-                rsSchema.Fields( _
-                    "COLUMN_NAME").Value)
-
-
-        If nombreCampo <> "" Then
-
-            If UCase$(nombreCampo) <> "ID" Then
-
-                If Not mapa.Exists( _
-                    NormalizarEncabezado( _
-                        nombreCampo)) Then
-
-                    mapa.Add _
-                        NormalizarEncabezado( _
-                            nombreCampo), _
-                        nombreCampo
-
-                End If
-
-            End If
-
-        End If
-
-
-        rsSchema.MoveNext
-
-
-    Loop
-
-
-    rsSchema.Close
-
-    Set rsSchema = Nothing
-
-
-    Set ObtenerCamposTablaAccess = mapa
-
-
-    Exit Function
-
-
-ErrorHandler:
-
-    If Not rsSchema Is Nothing Then
-
-        On Error Resume Next
-
-        rsSchema.Close
-
-    End If
-
-
-    Err.Raise _
-        Err.Number, _
-        "ObtenerCamposTablaAccess", _
-        Err.Description
-
-End Function
-
-
-'==========================================================
-' OBTENER REGISTROS NECESARIOS DE ACCESS
-'
-' Solo se leen los campos necesarios para comparar:
-'
-' RFC
-' CURP
-' QNA
-' AÑO
-'
-'==========================================================
-
-Private Function ObtenerRegistrosComparacion( _
-    ByVal cn As Object, _
-    ByVal nombreTabla As String) As Object
-
-
-    Dim rs As Object
-
-    Dim sql As String
-
-
-    On Error GoTo ErrorHandler
-
-
-    sql = _
-        "SELECT [RFC], [CURP], [QNA], [AÑO] " & _
-        "FROM [" & nombreTabla & "]"
-
-
-    Set rs = _
-        CreateObject( _
-            "ADODB.Recordset")
-
-
-    rs.Open _
-        sql, _
-        cn, _
-        3, _
-        1
-
-
-    Set ObtenerRegistrosComparacion = rs
-
-
-    Exit Function
-
-
-ErrorHandler:
-
-    Err.Raise _
-        Err.Number, _
-        "ObtenerRegistrosComparacion", _
-        Err.Description
-
-End Function
-
-
-'==========================================================
-' AGREGAR REGISTRO ACCESS A MEMORIA
-'==========================================================
-
-Private Sub AgregarRegistroAccessMemoria( _
-    ByVal rs As Object, _
-    ByVal dicRFC As Object, _
-    ByVal dicCURP As Object)
-
-
-    Dim rfc As String
-
-    Dim curp As String
-
-    Dim qna As Long
-
-    Dim anio As Long
-
-    Dim registro As Variant
-
-
-    rfc = _
-        TextoSeguroRecordset( _
-            rs, _
-            "RFC")
-
-
-    curp = _
-        TextoSeguroRecordset( _
-            rs, _
-            "CURP")
-
-
-    qna = _
-        NumeroRecordset( _
-            rs, _
-            "QNA")
-
-
-    anio = _
-        NumeroRecordset( _
-            rs, _
-            "AÑO")
-
-
-    '------------------------------------------------------
-    ' Guardar información como:
-    '
-    ' Array(QNA, AÑO)
-    '------------------------------------------------------
-
-    registro = _
-        Array( _
-            qna, _
-            anio)
-
-
-    If rfc <> "" Then
-
-        AgregarRecenciaDiccionario _
-            dicRFC, _
-            rfc, _
-            qna, _
-            anio
-
-    End If
-
-
-    If curp <> "" Then
-
-        AgregarRecenciaDiccionario _
-            dicCURP, _
-            curp, _
-            qna, _
-            anio
-
-    End If
-
-End Sub
-
-
-'==========================================================
-' GUARDAR SOLO EL REGISTRO MAS RECIENTE EN DICCIONARIO
-'==========================================================
-
-Private Sub AgregarRecenciaDiccionario( _
-    ByVal dic As Object, _
-    ByVal clave As String, _
-    ByVal qna As Long, _
-    ByVal anio As Long)
-
-
-    Dim anterior As Variant
-
-
-    If dic.Exists(clave) Then
-
-
-        anterior = _
-            dic(clave)
-
-
-        If RegistroExternoEsMasReciente( _
-                anio, _
-                qna, _
-                CLng(anterior(1)), _
-                CLng(anterior(0))) Then
-
-
-            dic(clave) = _
-                Array(qna, anio)
-
-        End If
-
-
-    Else
-
-        dic.Add _
-            clave, _
-            Array(qna, anio)
-
-    End If
-
-End Sub
-
-
-'==========================================================
-' OBTENER RECENCIA DEL DICCIONARIO
-'==========================================================
-
-Private Sub ObtenerRecenciaDiccionario( _
-    ByVal dato As Variant, _
-    ByRef qna As Long, _
-    ByRef anio As Long)
-
-
-    qna = _
-        CLng( _
-            dato(0))
-
-
-    anio = _
-        CLng( _
-            dato(1))
-
-End Sub
-
-
-'==========================================================
-' DETERMINAR SI EL EXTERNO ES MAS RECIENTE
-'
-' QUINCENA + CICLO:
-'
-' SOLO COMPARACION.
-'
-' NO SE COPIAN A QNA/AÑO.
-'==========================================================
-
-Private Function RegistroExternoEsMasReciente( _
-    ByVal cicloExterno As Long, _
-    ByVal qnaExterna As Long, _
-    ByVal cicloAccess As Long, _
-    ByVal qnaAccess As Long) As Boolean
-
-
-    If cicloExterno > cicloAccess Then
-
-        RegistroExternoEsMasReciente = True
-
-        Exit Function
-
-    End If
-
-
-    If cicloExterno < cicloAccess Then
-
-        RegistroExternoEsMasReciente = False
-
-        Exit Function
-
-    End If
-
-
-    If qnaExterna > qnaAccess Then
-
-        RegistroExternoEsMasReciente = True
-
-    Else
-
-        RegistroExternoEsMasReciente = False
-
-    End If
-
-End Function
-
-
-'==========================================================
-' PRIMERA FILA LIBRE DE REGISTRAR
-'==========================================================
-
-Private Function PrimeraFilaLibreRegistrar( _
-    ByVal ws As Worksheet, _
-    ByVal mapaAccess As Object) As Long
-
-
-    Dim fila As Long
-
-    Dim columnaRFC As Long
-
-
-    columnaRFC = _
-        BuscarColumnaRegistrar( _
-            ws, _
-            "RFC")
-
-
-    If columnaRFC = 0 Then
-
-        MsgBox _
-            "No se encontro RFC en REGISTRAR.", _
-            vbCritical, _
-            "IMPORTAR"
-
-
-        PrimeraFilaLibreRegistrar = 0
-
-        Exit Function
-
-    End If
-
-
-    fila = _
-        FILA_INICIO_REGISTRAR
-
-
-    Do While _
-        Trim$( _
-            TextoSeguro( _
-                ws.Cells( _
-                    fila, _
-                    columnaRFC).Value2)) <> ""
-
-
-        fila = _
-            fila + 1
-
-
-        If fila > _
-           FILA_FIN_REGISTRAR Then
-
-
-            MsgBox _
-                "REGISTRAR esta llena hasta la fila " & _
-                FILA_FIN_REGISTRAR & ".", _
-                vbExclamation, _
-                "IMPORTAR"
-
-
-            PrimeraFilaLibreRegistrar = 0
-
-            Exit Function
-
-        End If
-
-
-    Loop
-
-
-    PrimeraFilaLibreRegistrar = fila
-
-End Function
-
-
-'==========================================================
-' BUSCAR COLUMNA EN REGISTRAR
-'
-' Encabezados en fila 8.
-'==========================================================
-
-Private Function BuscarColumnaRegistrar( _
-    ByVal ws As Worksheet, _
-    ByVal encabezadoBuscado As String) As Long
-
-
-    Dim c As Long
-
-    Dim encabezado As String
-
-
-    For c = 1 To 38
-
-
-        encabezado = _
-            NormalizarEncabezado( _
-                TextoSeguro( _
-                    ws.Cells( _
-                        FILA_ENCABEZADOS_REGISTRAR, _
-                        c).Value2))
-
-
-        If encabezado = _
-           NormalizarEncabezado( _
-               encabezadoBuscado) Then
-
-
-            BuscarColumnaRegistrar = c
-
-            Exit Function
-
-        End If
-
-
-    Next c
-
-
-    BuscarColumnaRegistrar = 0
-
-End Function
-
-
-'==========================================================
-' COPIAR FORMULAS DE LA FILA ANTERIOR
-'
-' Esto mantiene formulas como RFC_COMPLETO.
-'
-' NO toca los dropdowns.
-'==========================================================
-
-Private Sub CopiarFormulasFilaAnterior( _
-    ByVal ws As Worksheet, _
-    ByVal fila As Long)
-
-
-    Dim c As Long
-
-    Dim formula As String
-
-
-    If fila <= FILA_INICIO_REGISTRAR Then
+    '====================================================
+    ' VALIDAR
+    '====================================================
+
+    If rfc = "" And rfcCompleto = "" And curp = "" Then
+
+        MsgBox "INGRESA AL MENOS UNO DE LOS SIGUIENTES DATOS:" & _
+               vbCrLf & vbCrLf & _
+               "• RFC" & _
+               vbCrLf & _
+               "• RFC_COMPLETO" & _
+               vbCrLf & _
+               "• CURP", _
+               vbExclamation, _
+               "BUSCAR PERSONA"
 
         Exit Sub
 
     End If
 
 
-    For c = 1 To 38
+    '====================================================
+    ' LIMPIAR RESULTADOS ANTERIORES
+    '====================================================
+
+    LimpiarResultados
 
 
-        If ws.Cells( _
-            fila - 1, _
-            c).HasFormula Then
+    '====================================================
+    ' CONEXIÓN
+    '====================================================
+
+    Set cn = AbrirConexionAccess()
+
+    If cn Is Nothing Then Exit Sub
 
 
-            formula = _
-                ws.Cells( _
-                    fila - 1, _
-                    c).formula
+    '====================================================
+    ' CONSTRUIR CONDICIONES
+    '====================================================
+
+    condiciones = ""
 
 
-            If formula <> "" Then
+    If rfc <> "" Then
 
-                ws.Cells( _
-                    fila, _
-                    c).formula = _
-                    formula
+        condiciones = condiciones & _
+            "[RFC] = '" & Replace(rfc, "'", "''") & "'"
 
-            End If
+    End If
 
 
+    If rfcCompleto <> "" Then
+
+        If condiciones <> "" Then
+            condiciones = condiciones & " OR "
+        End If
+
+        condiciones = condiciones & _
+            "[RFC_COMPLETO] = '" & _
+            Replace(rfcCompleto, "'", "''") & "'"
+
+    End If
+
+
+    If curp <> "" Then
+
+        If condiciones <> "" Then
+            condiciones = condiciones & " OR "
+        End If
+
+        condiciones = condiciones & _
+            "[CURP] = '" & _
+            Replace(curp, "'", "''") & "'"
+
+    End If
+
+
+    '====================================================
+    ' CONSULTA
+    '====================================================
+
+    sql = "SELECT * FROM [AHORRO_SOLIDARIO] WHERE " & condiciones
+
+
+    Set rs = CreateObject("ADODB.Recordset")
+
+    rs.Open sql, cn, 1, 1
+
+
+    '====================================================
+    ' SIN RESULTADOS
+    '====================================================
+
+    If rs.EOF Then
+
+        MsgBox "NO SE ENCONTRÓ NINGÚN REGISTRO." & _
+               vbCrLf & vbCrLf & _
+               "Verifica el RFC, RFC_COMPLETO o CURP.", _
+               vbInformation, _
+               "SIN RESULTADOS"
+
+        GoTo Salir
+
+    End If
+
+
+    '====================================================
+    ' ESCRIBIR RESULTADOS
+    '====================================================
+
+    cantidad = 0
+
+
+    Do While Not rs.EOF
+
+        cantidad = cantidad + 1
+
+        EscribirRegistroEnBuscar ws, rs, cantidad
+
+        rs.MoveNext
+
+    Loop
+
+
+    '====================================================
+    ' TIEMPO
+    '====================================================
+
+    tiempo = Timer - inicio
+
+    If tiempo < 0 Then
+        tiempo = tiempo + 86400
+    End If
+
+
+    '====================================================
+    ' RESULTADO
+    '====================================================
+
+    MsgBox "BÚSQUEDA COMPLETADA." & _
+           vbCrLf & vbCrLf & _
+           "Registros encontrados: " & cantidad & _
+           vbCrLf & _
+           "Tiempo: " & Format(tiempo, "0.00") & " segundos.", _
+           vbInformation, _
+           "BÚSQUEDA COMPLETADA"
+
+
+Salir:
+
+    On Error Resume Next
+
+    If Not rs Is Nothing Then
+
+        If rs.State <> 0 Then
+            rs.Close
+        End If
+
+    End If
+
+    If Not cn Is Nothing Then
+
+        If cn.State <> 0 Then
+            cn.Close
+        End If
+
+    End If
+
+    Set rs = Nothing
+    Set cn = Nothing
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    Exit Sub
+
+
+ErrorHandler:
+
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    MsgBox "OCURRIÓ UN ERROR DURANTE LA BÚSQUEDA." & _
+           vbCrLf & vbCrLf & _
+           "Error " & Err.Number & ":" & _
+           vbCrLf & _
+           Err.Description, _
+           vbCritical, _
+           "ERROR DE BÚSQUEDA"
+
+    Resume Salir
+
+End Sub
+
+
+'========================================================
+' ESCRIBIR UN REGISTRO
+'========================================================
+
+Private Sub EscribirRegistroEnBuscar( _
+    ByVal ws As Worksheet, _
+    ByVal rs As Object, _
+    ByVal numeroRegistro As Long)
+
+    Dim campo As Object
+    Dim nombreCampo As String
+    Dim valor As Variant
+
+    Dim fila1 As Long
+    Dim fila2 As Long
+    Dim fila3 As Long
+    Dim fila4 As Long
+
+    Dim celda As Range
+
+
+    '====================================================
+    ' CADA BLOQUE TIENE 20 FILAS
+    '====================================================
+
+    If numeroRegistro <= 20 Then
+
+        fila1 = 10 + numeroRegistro
+
+    Else
+
+        fila1 = 0
+
+    End If
+
+
+    If numeroRegistro <= 20 Then
+
+        fila2 = 34 + numeroRegistro
+
+    Else
+
+        fila2 = 0
+
+    End If
+
+
+    If numeroRegistro <= 20 Then
+
+        fila3 = 58 + numeroRegistro
+
+    Else
+
+        fila3 = 0
+
+    End If
+
+
+    If numeroRegistro <= 20 Then
+
+        fila4 = 82 + numeroRegistro
+
+    Else
+
+        fila4 = 0
+
+    End If
+
+
+    '====================================================
+    ' RECORRER LOS CAMPOS DE ACCESS
+    '====================================================
+
+    For Each campo In rs.Fields
+
+        nombreCampo = campo.Name
+
+        If IsNull(campo.Value) Then
+            valor = ""
+        Else
+            valor = campo.Value
         End If
 
 
-    Next c
+        '-----------------------------------------------
+        ' DATOS DE LA PERSONA
+        '-----------------------------------------------
+
+        Select Case nombreCampo
+
+            Case "RFC"
+                If fila1 > 0 Then ws.Cells(fila1, 2).Value = valor
+
+            Case "RFC_COMPLETO"
+                If fila1 > 0 Then ws.Cells(fila1, 3).Value = valor
+
+            Case "HOM"
+                If fila1 > 0 Then ws.Cells(fila1, 4).Value = valor
+
+            Case "PATERNO"
+                If fila1 > 0 Then ws.Cells(fila1, 5).Value = valor
+
+            Case "MATERNO"
+                If fila1 > 0 Then ws.Cells(fila1, 6).Value = valor
+
+            Case "NOMBRE"
+                If fila1 > 0 Then ws.Cells(fila1, 7).Value = valor
+
+            Case "CURP"
+                If fila1 > 0 Then ws.Cells(fila1, 8).Value = valor
+
+            Case "NIVEL"
+                If fila1 > 0 Then ws.Cells(fila1, 9).Value = valor
+
+            Case "UR"
+                If fila1 > 0 Then ws.Cells(fila1, 10).Value = valor
+
+            Case "POR_MEDIO_DE"
+                If fila1 > 0 Then ws.Cells(fila1, 11).Value = valor
+
+
+        '-----------------------------------------------
+        ' DATOS DEL AHORRO
+        '-----------------------------------------------
+
+            Case "SOLICITA_PORCENTAJE"
+                If fila2 > 0 Then ws.Cells(fila2, 2).Value = valor
+
+            Case "PORCENTAJE"
+                If fila2 > 0 Then ws.Cells(fila2, 3).Value = valor
+
+            Case "QNA"
+                If fila2 > 0 Then ws.Cells(fila2, 4).Value = valor
+
+            Case "AÑO"
+                If fila2 > 0 Then ws.Cells(fila2, 5).Value = valor
+
+            Case "C_B"
+                If fila2 > 0 Then ws.Cells(fila2, 6).Value = valor
+
+            Case "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO"
+                If fila2 > 0 Then ws.Cells(fila2, 7).Value = valor
+
+            Case "FECHA_APLICAR_AHORRO"
+                If fila2 > 0 Then ws.Cells(fila2, 8).Value = valor
+
+            Case "FECHA_HOY"
+                If fila2 > 0 Then ws.Cells(fila2, 9).Value = valor
+
+            Case "RESULTADO_ANALISIS"
+                If fila2 > 0 Then ws.Cells(fila2, 10).Value = valor
+
+            Case "QNA_APLICACION"
+                If fila2 > 0 Then ws.Cells(fila2, 11).Value = valor
+
+
+        '-----------------------------------------------
+        ' RÉGIMEN / APLICACIÓN
+        '-----------------------------------------------
+
+            Case "OBSERVACIONES"
+                If fila3 > 0 Then ws.Cells(fila3, 2).Value = valor
+
+            Case "REGIMEN_EN_SINAVID_ISSSTE"
+                If fila3 > 0 Then ws.Cells(fila3, 3).Value = valor
+
+            Case "REGIMEN_EN_SIRI_ES_EL_QUE_MAS_IMPORTANCIA_TIENE_PARA_APLIC"
+                If fila3 > 0 Then ws.Cells(fila3, 4).Value = valor
+
+            Case "DIA_EN_QUE_SE_TRABAJA_LA_SOLICITUD"
+                If fila3 > 0 Then ws.Cells(fila3, 5).Value = valor
+
+            Case "SARH_APLICACION_DE_AHORRO_SOLIDARIO"
+                If fila3 > 0 Then ws.Cells(fila3, 6).Value = valor
+
+            Case "ACTIVO_INACTIVO_EN_ISSSTE_PARA_DAR_ALTA_O_BAJA"
+                If fila3 > 0 Then ws.Cells(fila3, 7).Value = valor
+
+            Case "CURP'S_HISTORICAS_POR_SI_NO_SE_PUEDE_ACCEDER_A_SINAVID"
+                If fila3 > 0 Then ws.Cells(fila3, 8).Value = valor
+
+            Case "SOLICITUDES_POR_OFICIO"
+                If fila3 > 0 Then ws.Cells(fila3, 9).Value = valor
+
+            Case "OFICIO_FOLIO"
+                If fila3 > 0 Then ws.Cells(fila3, 10).Value = valor
+
+            Case "CORREO_ELECTRONICO"
+                If fila3 > 0 Then ws.Cells(fila3, 11).Value = valor
+
+            Case "DESCARGO_SAC"
+                'No hay columna disponible en el diseño actual.
+                'Se agregará al ajustar la tabla.
+
+
+        '-----------------------------------------------
+        ' CONTROL Y SEGUIMIENTO
+        '-----------------------------------------------
+
+            Case "AREA_DIRECCION"
+                If fila4 > 0 Then ws.Cells(fila4, 2).Value = valor
+
+            Case "CONTEO_OFICIOS"
+                If fila4 > 0 Then ws.Cells(fila4, 3).Value = valor
+
+            Case "MES_DE_CAPTURA"
+                If fila4 > 0 Then ws.Cells(fila4, 4).Value = valor
+
+            Case "ALTA_BAJA"
+                If fila4 > 0 Then ws.Cells(fila4, 5).Value = valor
+
+            Case "REVISO"
+                If fila4 > 0 Then ws.Cells(fila4, 6).Value = valor
+
+            Case "ESCANER_-_SEPARADO"
+                If fila4 > 0 Then ws.Cells(fila4, 7).Value = valor
+
+            Case "SEXO"
+                If fila4 > 0 Then ws.Cells(fila4, 8).Value = valor
+
+        End Select
+
+    Next campo
 
 End Sub
 
 
-'==========================================================
-' GUARDAR RANGO DE ULTIMA IMPORTACION
-'==========================================================
+'========================================================
+' LIMPIAR RESULTADOS
+'========================================================
 
-Private Sub GuardarRangoUltimaImportacion( _
-    ByVal primeraFila As Long, _
-    ByVal ultimaFila As Long)
+Public Sub LimpiarResultados()
 
+    Dim ws As Worksheet
 
-    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("BUSCAR")
 
+    Application.ScreenUpdating = False
 
-    ThisWorkbook.Names( _
-        "FilaInicioImportacion").Delete
+    'Bloque 1
+    ws.Range("B11:K30").ClearContents
 
+    'Bloque 2
+    ws.Range("B35:K54").ClearContents
 
-    ThisWorkbook.Names( _
-        "FilaFinImportacion").Delete
+    'Bloque 3
+    ws.Range("B59:K78").ClearContents
 
+    'Bloque 4
+    ws.Range("B83:K102").ClearContents
 
-    On Error GoTo 0
-
-
-    ThisWorkbook.Names.Add _
-        Name:="FilaInicioImportacion", _
-        RefersTo:="=" & _
-        primeraFila
-
-
-    ThisWorkbook.Names.Add _
-        Name:="FilaFinImportacion", _
-        RefersTo:="=" & _
-        ultimaFila
+    Application.ScreenUpdating = True
 
 End Sub
 
 
-'==========================================================
-' OBTENER VALOR DEL ARRAY
-'==========================================================
+'========================================================
+' BOTÓN LIMPIAR
+'========================================================
 
-Private Function ObtenerValorArray( _
-    ByRef datos As Variant, _
-    ByVal fila As Long, _
-    ByVal columna As Long) As String
+Public Sub LimpiarBusqueda()
 
+    Dim ws As Worksheet
 
-    Dim valor As Variant
+    On Error GoTo ErrorHandler
 
+    Set ws = ThisWorkbook.Worksheets("BUSCAR")
 
-    valor = _
-        datos(fila, columna)
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
 
 
-    ObtenerValorArray = _
-        TextoSeguro(valor)
+    'Campos de búsqueda
 
-End Function
+    ws.Range("F5").ClearContents
+    ws.Range("F6").ClearContents
+    ws.Range("F7").ClearContents
 
 
-'==========================================================
-' CONVERTIR A NUMERO
-'==========================================================
+    'Resultados
 
-Private Function NumeroSeguro( _
-    ByVal texto As String) As Long
+    LimpiarResultados
 
 
-    If Trim$(texto) = "" Then
+    'Regresar al RFC
 
-        NumeroSeguro = 0
+    ws.Activate
+    ws.Range("F5").Select
 
-    ElseIf IsNumeric(texto) Then
 
-        NumeroSeguro = _
-            CLng(texto)
+Salir:
 
-    Else
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
 
-        NumeroSeguro = _
-            CLng(Val(texto))
+    Exit Sub
 
-    End If
 
-End Function
+ErrorHandler:
 
+    MsgBox "NO SE PUDO LIMPIAR LA BÚSQUEDA." & _
+           vbCrLf & vbCrLf & _
+           "Error " & Err.Number & ":" & _
+           vbCrLf & _
+           Err.Description, _
+           vbCritical, _
+           "ERROR"
 
-'==========================================================
-' TEXTO SEGURO
-'==========================================================
-
-Private Function TextoSeguro( _
-    ByVal valor As Variant) As String
-
-
-    If IsError(valor) Then
-
-        TextoSeguro = ""
-
-    ElseIf IsNull(valor) Then
-
-        TextoSeguro = ""
-
-    Else
-
-        TextoSeguro = _
-            Trim$( _
-                CStr(valor))
-
-    End If
-
-End Function
-
-
-'==========================================================
-' TEXTO SEGURO DESDE RECORDSET
-'==========================================================
-
-Private Function TextoSeguroRecordset( _
-    ByVal rs As Object, _
-    ByVal campo As String) As String
-
-
-    On Error GoTo ErrorTexto
-
-
-    If IsNull( _
-        rs.Fields(campo).Value) Then
-
-        TextoSeguroRecordset = ""
-
-    Else
-
-        TextoSeguroRecordset = _
-            Trim$( _
-                CStr( _
-                    rs.Fields(campo).Value))
-
-    End If
-
-
-    Exit Function
-
-
-ErrorTexto:
-
-    TextoSeguroRecordset = ""
-
-End Function
-
-
-'==========================================================
-' NUMERO DESDE RECORDSET
-'==========================================================
-
-Private Function NumeroRecordset( _
-    ByVal rs As Object, _
-    ByVal campo As String) As Long
-
-
-    On Error GoTo ErrorNumero
-
-
-    If IsNull( _
-        rs.Fields(campo).Value) Then
-
-        NumeroRecordset = 0
-
-    Else
-
-        NumeroRecordset = _
-            CLng( _
-                Val( _
-                    CStr( _
-                        rs.Fields(campo).Value)))
-
-    End If
-
-
-    Exit Function
-
-
-ErrorNumero:
-
-    NumeroRecordset = 0
-
-End Function
-
-
-'==========================================================
-' OBTENER DIMENSIONES
-'==========================================================
-
-Private Sub ObtenerDimensiones( _
-    ByVal ws As Worksheet, _
-    ByRef ultimaFila As Long, _
-    ByRef ultimaColumna As Long)
-
-
-    Dim ultimaCelda As Range
-
-
-    ultimaFila = 0
-
-    ultimaColumna = 0
-
-
-    On Error Resume Next
-
-
-    Set ultimaCelda = _
-        ws.Cells.SpecialCells( _
-            xlCellTypeLastCell)
-
-
-    On Error GoTo 0
-
-
-    If ultimaCelda Is Nothing Then Exit Sub
-
-
-    ultimaFila = _
-        ultimaCelda.Row
-
-
-    ultimaColumna = _
-        ultimaCelda.Column
+    Resume Salir
 
 End Sub
 
 
-'==========================================================
-' NORMALIZAR ENCABEZADO
-'
-' IMPORTANTE:
-'
-' NO CREA EQUIVALENCIAS.
-'
-' Solo:
-' - elimina espacios al inicio/final
-' - convierte a mayusculas
-'
-'==========================================================
-
-Private Function NormalizarEncabezado( _
-    ByVal texto As String) As String
-
-
-    texto = _
-        Trim$(texto)
-
-
-    texto = _
-        UCase$(texto)
-
-
-    NormalizarEncabezado = _
-        texto
-
-End Function
 
