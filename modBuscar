@@ -295,54 +295,36 @@ Private Sub EscribirRegistroEnBuscar( _
     Dim fila3 As Long
     Dim fila4 As Long
 
-    Dim celda As Range
-
 
     '====================================================
     ' CADA BLOQUE TIENE 20 FILAS
     '====================================================
 
     If numeroRegistro <= 20 Then
-
         fila1 = 10 + numeroRegistro
-
     Else
-
         fila1 = 0
-
     End If
 
 
     If numeroRegistro <= 20 Then
-
         fila2 = 34 + numeroRegistro
-
     Else
-
         fila2 = 0
-
     End If
 
 
     If numeroRegistro <= 20 Then
-
         fila3 = 58 + numeroRegistro
-
     Else
-
         fila3 = 0
-
     End If
 
 
     If numeroRegistro <= 20 Then
-
         fila4 = 82 + numeroRegistro
-
     Else
-
         fila4 = 0
-
     End If
 
 
@@ -353,6 +335,7 @@ Private Sub EscribirRegistroEnBuscar( _
     For Each campo In rs.Fields
 
         nombreCampo = campo.Name
+
 
         If IsNull(campo.Value) Then
             valor = ""
@@ -398,9 +381,9 @@ Private Sub EscribirRegistroEnBuscar( _
                 If fila1 > 0 Then ws.Cells(fila1, 11).Value = valor
 
 
-        '-----------------------------------------------
-        ' DATOS DEL AHORRO
-        '-----------------------------------------------
+            '-----------------------------------------------
+            ' DATOS DEL AHORRO
+            '-----------------------------------------------
 
             Case "SOLICITA_PORCENTAJE"
                 If fila2 > 0 Then ws.Cells(fila2, 2).Value = valor
@@ -418,13 +401,16 @@ Private Sub EscribirRegistroEnBuscar( _
                 If fila2 > 0 Then ws.Cells(fila2, 6).Value = valor
 
             Case "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO"
-                If fila2 > 0 Then ws.Cells(fila2, 7).Value = valor
+                If fila2 > 0 Then _
+                    EscribirFechaBuscar ws, fila2, 7, valor
 
             Case "FECHA_APLICAR_AHORRO"
-                If fila2 > 0 Then ws.Cells(fila2, 8).Value = valor
+                If fila2 > 0 Then _
+                    EscribirFechaBuscar ws, fila2, 8, valor
 
             Case "FECHA_HOY"
-                If fila2 > 0 Then ws.Cells(fila2, 9).Value = valor
+                If fila2 > 0 Then _
+                    EscribirFechaBuscar ws, fila2, 9, valor
 
             Case "RESULTADO_ANALISIS"
                 If fila2 > 0 Then ws.Cells(fila2, 10).Value = valor
@@ -433,9 +419,9 @@ Private Sub EscribirRegistroEnBuscar( _
                 If fila2 > 0 Then ws.Cells(fila2, 11).Value = valor
 
 
-        '-----------------------------------------------
-        ' RÉGIMEN / APLICACIÓN
-        '-----------------------------------------------
+            '-----------------------------------------------
+            ' RÉGIMEN / APLICACIÓN
+            '-----------------------------------------------
 
             Case "OBSERVACIONES"
                 If fila3 > 0 Then ws.Cells(fila3, 2).Value = valor
@@ -472,9 +458,9 @@ Private Sub EscribirRegistroEnBuscar( _
                 'Se agregará al ajustar la tabla.
 
 
-        '-----------------------------------------------
-        ' CONTROL Y SEGUIMIENTO
-        '-----------------------------------------------
+            '-----------------------------------------------
+            ' CONTROL Y SEGUIMIENTO
+            '-----------------------------------------------
 
             Case "AREA_DIRECCION"
                 If fila4 > 0 Then ws.Cells(fila4, 2).Value = valor
@@ -502,6 +488,279 @@ Private Sub EscribirRegistroEnBuscar( _
     Next campo
 
 End Sub
+
+
+'========================================================
+' ESCRIBIR FECHA EN BUSCAR
+'
+' IMPORTANTE:
+' Access puede entregar:
+'
+' 1) Una fecha real
+' 2) Texto DD/MM/YYYY
+' 3) Un número serial de Excel
+'
+' Esta rutina evita que:
+'
+' 01/08/2026
+'
+' se convierta en:
+'
+' 08/01/2026
+'
+'========================================================
+
+Private Sub EscribirFechaBuscar( _
+    ByVal ws As Worksheet, _
+    ByVal fila As Long, _
+    ByVal columna As Long, _
+    ByVal valor As Variant)
+
+    Dim fechaReal As Variant
+
+    If IsNull(valor) Or IsEmpty(valor) Then
+
+        ws.Cells(fila, columna).ClearContents
+
+        Exit Sub
+
+    End If
+
+
+    If Trim$(CStr(valor)) = "" Then
+
+        ws.Cells(fila, columna).ClearContents
+
+        Exit Sub
+
+    End If
+
+
+    fechaReal = ConvertirFechaBuscar(valor)
+
+
+    If IsDate(fechaReal) Then
+
+        ws.Cells(fila, columna).Value = CDate(fechaReal)
+
+        ws.Cells(fila, columna).NumberFormat = "dd/mm/yyyy"
+
+    Else
+
+        ws.Cells(fila, columna).Value = valor
+
+        ws.Cells(fila, columna).NumberFormat = "dd/mm/yyyy"
+
+    End If
+
+End Sub
+
+
+'========================================================
+' CONVERTIR FECHA PARA BUSCAR
+'
+' DD/MM/YYYY SE INTERPRETA SIEMPRE COMO:
+'
+' DIA / MES / AÑO
+'
+' TAMBIEN SOPORTA NUMEROS SERIAL DE EXCEL.
+'========================================================
+
+Private Function ConvertirFechaBuscar( _
+    ByVal valor As Variant) As Variant
+
+    Dim texto As String
+    Dim partes As Variant
+
+    Dim dia As Long
+    Dim mes As Long
+    Dim anio As Long
+
+    Dim numeroSerial As Double
+
+
+    On Error GoTo ErrorFecha
+
+
+    '====================================================
+    ' FECHA REAL
+    '====================================================
+
+    If VarType(valor) = vbDate Then
+
+        ConvertirFechaBuscar = CDate(valor)
+
+        Exit Function
+
+    End If
+
+
+    '====================================================
+    ' TEXTO
+    '====================================================
+
+    texto = Trim$(CStr(valor))
+
+
+    If texto = "" Then
+
+        ConvertirFechaBuscar = ""
+
+        Exit Function
+
+    End If
+
+
+    '====================================================
+    ' SI ES UN NUMERO PURO
+    '
+    ' EJEMPLO:
+    '
+    ' 39129
+    ' 46260
+    '
+    ' SE TRATA COMO SERIAL DE EXCEL.
+    '====================================================
+
+    If IsNumeric(texto) Then
+
+        If InStr(1, texto, "/") = 0 And _
+           InStr(1, texto, "-") = 0 Then
+
+            numeroSerial = CDbl(texto)
+
+            If numeroSerial > 0 And _
+               numeroSerial < 1000000 Then
+
+                ConvertirFechaBuscar = _
+                    DateSerial(1899, 12, 30) + numeroSerial
+
+                Exit Function
+
+            End If
+
+        End If
+
+    End If
+
+
+    '====================================================
+    ' QUITAR HORA
+    '====================================================
+
+    If InStr(1, texto, " ") > 0 Then
+
+        texto = _
+            Left$( _
+                texto, _
+                InStr(1, texto, " ") - 1)
+
+    End If
+
+
+    If InStr(1, texto, "T") > 0 Then
+
+        texto = _
+            Left$( _
+                texto, _
+                InStr(1, texto, "T") - 1)
+
+    End If
+
+
+    '====================================================
+    ' CAMBIAR GUIONES POR /
+    '====================================================
+
+    texto = Replace(texto, "-", "/")
+
+
+    '====================================================
+    ' SEPARAR
+    '====================================================
+
+    partes = Split(texto, "/")
+
+
+    If UBound(partes) <> 2 Then
+
+        GoTo ErrorFecha
+
+    End If
+
+
+    '====================================================
+    ' YYYY/MM/DD
+    '====================================================
+
+    If Len(Trim$(partes(0))) = 4 Then
+
+        anio = CLng(Trim$(partes(0)))
+
+        mes = CLng(Trim$(partes(1)))
+
+        dia = CLng(Trim$(partes(2)))
+
+
+    Else
+
+        '================================================
+        ' DD/MM/YYYY
+        '================================================
+
+        dia = CLng(Trim$(partes(0)))
+
+        mes = CLng(Trim$(partes(1)))
+
+        anio = CLng(Trim$(partes(2)))
+
+    End If
+
+
+    '====================================================
+    ' VALIDAR
+    '====================================================
+
+    If dia < 1 Or dia > 31 Then
+
+        GoTo ErrorFecha
+
+    End If
+
+
+    If mes < 1 Or mes > 12 Then
+
+        GoTo ErrorFecha
+
+    End If
+
+
+    If anio < 1900 Or anio > 2100 Then
+
+        GoTo ErrorFecha
+
+    End If
+
+
+    '====================================================
+    ' CREAR FECHA SIN CDate SOBRE EL TEXTO
+    '====================================================
+
+    ConvertirFechaBuscar = _
+        DateSerial( _
+            anio, _
+            mes, _
+            dia)
+
+
+    Exit Function
+
+
+ErrorFecha:
+
+    ConvertirFechaBuscar = valor
+
+End Function
 
 
 '========================================================
@@ -588,6 +847,5 @@ ErrorHandler:
     Resume Salir
 
 End Sub
-
 
 
