@@ -344,6 +344,11 @@ Public Sub BuscarPorDatos()
             FILA_INICIO, _
             FILA_INICIO + cantidad - 1
 
+        FormatearFechasModificar _
+            ws, _
+            FILA_INICIO, _
+            FILA_INICIO + cantidad - 1
+
 
     End If
 
@@ -573,6 +578,11 @@ Public Sub BuscarPendientes()
             FILA_INICIO, _
             FILA_INICIO + cantidad - 1
 
+        FormatearFechasModificar _
+            ws, _
+            FILA_INICIO, _
+            FILA_INICIO + cantidad - 1
+
     End If
 
 
@@ -683,41 +693,26 @@ Private Function EscribirResultados( _
     ByVal ws As Worksheet, _
     ByVal rs As Object) As Long
 
-
     Dim fila As Long
-
     Dim c As Long
-
     Dim campo As String
-
     Dim columna As Long
-
     Dim valor As Variant
-
     Dim cantidad As Long
-
+    Dim fechaReal As Variant
 
     fila = FILA_INICIO
 
-
     If rs.EOF Then
-
         EscribirResultados = 0
-
         Exit Function
-
     End If
-
 
     Do While Not rs.EOF
 
-
         If fila > FILA_MAXIMA Then
-
             Exit Do
-
         End If
-
 
         '==================================================
         ' RECORRER CAMPOS DE ACCESS
@@ -725,85 +720,78 @@ Private Function EscribirResultados( _
 
         For c = 0 To rs.Fields.Count - 1
 
-
-            campo = _
-                Trim$( _
-                    CStr( _
-                        rs.Fields(c).Name))
-
+            campo = Trim$(CStr(rs.Fields(c).Name))
 
             '================================================
-            ' ID
+            ' ID SE GUARDA SOLAMENTE EN AM
             '================================================
 
             If UCase$(campo) <> "ID" Then
 
-
                 '================================================
-                ' CAMPOS CALCULADOS
+                ' CAMPOS CALCULADOS NO SE IMPORTAN DESDE ACCESS
                 '================================================
 
-                If UCase$(campo) <> "RFC_COMPLETO" And _
-                   UCase$(campo) <> "FECHA_APLICAR_AHORRO" And _
-                   UCase$(campo) <> "FECHA_HOY" And _
-                   UCase$(campo) <> "RESULTADO_ANALISIS" Then
+                If Not EsCampoCalculadoModificar(campo) Then
 
-
-                    '============================================
-                    ' BUSCAR COLUMNA POR ENCABEZADO
-                    '============================================
-
-                    columna = _
-                        BuscarColumna( _
-                            ws, _
-                            campo)
-
+                    columna = BuscarColumna(ws, campo)
 
                     If columna > 0 Then
 
-
-                        '========================================
-                        ' OBTENER VALOR
-                        '========================================
-
-                        If IsNull( _
-                            rs.Fields(c).Value) Then
-
+                        If IsNull(rs.Fields(c).Value) Then
                             valor = ""
+                        Else
+                            valor = rs.Fields(c).Value
+                        End If
+
+                        '============================================
+                        ' CAMPOS DE FECHA
+                        '
+                        ' ACCESS LOS TIENE COMO TEXTO CORTO.
+                        ' SE INTERPRETAN SIEMPRE COMO DD/MM/YYYY.
+                        '============================================
+
+                        If EsCampoFechaModificar(campo) Then
+
+                            If EsValorVacioModificar(valor) Then
+
+                                ws.Cells(fila, columna).ClearContents
+
+                            Else
+
+                                fechaReal = ConvertirFechaDMYModificar(valor)
+
+                                If IsDate(fechaReal) Then
+
+                                    ws.Cells(fila, columna).Value = CDate(fechaReal)
+
+                                Else
+
+                                    ws.Cells(fila, columna).Value = valor
+
+                                End If
+
+                                ws.Cells(fila, columna).NumberFormat = "dd/mm/yyyy"
+
+                            End If
 
                         Else
 
-                            valor = _
-                                rs.Fields(c).Value
+                            If Not IsError(valor) Then
+
+                                ws.Cells(fila, columna).Value = valor
+
+                            End If
 
                         End If
-
-
-                        '========================================
-                        ' ESCRIBIR
-                        '========================================
-
-                        If Not IsError(valor) Then
-
-                            ws.Cells( _
-                                fila, _
-                                columna).Value = _
-                                valor
-
-                        End If
-
 
                     End If
 
-
                 End If
-
 
             End If
 
-
         Next c
-
 
         '==================================================
         ' GUARDAR ID DE ACCESS EN AM
@@ -811,49 +799,193 @@ Private Function EscribirResultados( _
 
         On Error Resume Next
 
+        If Not IsNull(rs.Fields("Id").Value) Then
 
-        If Not IsNull( _
-            rs.Fields("Id").Value) Then
-
-
-            ws.Cells( _
-                fila, _
-                COLUMNA_ID_AUX).Value = _
-                rs.Fields("Id").Value
-
+            ws.Cells(fila, COLUMNA_ID_AUX).Value = rs.Fields("Id").Value
 
         Else
 
-
-            ws.Cells( _
-                fila, _
-                COLUMNA_ID_AUX).ClearContents
-
+            ws.Cells(fila, COLUMNA_ID_AUX).ClearContents
 
         End If
 
-
         On Error GoTo 0
 
-
-        cantidad = _
-            cantidad + 1
-
-
-        fila = _
-            fila + 1
-
+        cantidad = cantidad + 1
+        fila = fila + 1
 
         rs.MoveNext
 
-
     Loop
-
 
     EscribirResultados = cantidad
 
+End Function
+
+
+'==========================================================
+' ES CAMPO DE FECHA
+'
+' ACCESS MANTIENE ESTOS CAMPOS COMO TEXTO CORTO.
+'==========================================================
+
+Private Function EsCampoFechaModificar( _
+    ByVal nombreCampo As String) As Boolean
+
+    Select Case UCase$(Trim$(nombreCampo))
+
+        Case "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO"
+            EsCampoFechaModificar = True
+
+        Case "FECHA_APLICAR_AHORRO"
+            EsCampoFechaModificar = True
+
+        Case "FECHA_HOY"
+            EsCampoFechaModificar = True
+
+        Case Else
+            EsCampoFechaModificar = False
+
+    End Select
 
 End Function
+
+
+'==========================================================
+' CONVERTIR FECHA DD/MM/YYYY
+'
+' EVITA QUE VBA INTERPRETE:
+'
+' 01/08/2026
+'
+' COMO:
+'
+' 08/01/2026
+'
+'
+' TAMBIEN SOPORTA VALORES NUMERICOS DE FECHA DE EXCEL.
+'==========================================================
+
+Private Function ConvertirFechaDMYModificar( _
+    ByVal valor As Variant) As Variant
+
+    Dim texto As String
+    Dim partes As Variant
+    Dim dia As Long
+    Dim mes As Long
+    Dim anio As Long
+    Dim numero As Double
+
+    On Error GoTo ErrorFecha
+
+    If VarType(valor) = vbDate Then
+
+        ConvertirFechaDMYModificar = CDate(valor)
+        Exit Function
+
+    End If
+
+    '======================================================
+    ' SI ACCESS ENTREGA UN SERIAL NUMERICO
+    '======================================================
+
+    If IsNumeric(valor) Then
+
+        numero = CDbl(valor)
+
+        If numero >= 30000 And numero <= 100000 Then
+
+            ConvertirFechaDMYModificar = _
+                DateSerial(1899, 12, 30) + numero
+
+            Exit Function
+
+        End If
+
+    End If
+
+    texto = Trim$(CStr(valor))
+
+    If texto = "" Then
+
+        ConvertirFechaDMYModificar = ""
+        Exit Function
+
+    End If
+
+    '======================================================
+    ' QUITAR HORA
+    '======================================================
+
+    If InStr(1, texto, " ") > 0 Then
+        texto = Left$(texto, InStr(1, texto, " ") - 1)
+    End If
+
+    If InStr(1, texto, "T") > 0 Then
+        texto = Left$(texto, InStr(1, texto, "T") - 1)
+    End If
+
+    texto = Replace(texto, "-", "/")
+
+    partes = Split(texto, "/")
+
+    If UBound(partes) <> 2 Then
+        GoTo ErrorFecha
+    End If
+
+    '======================================================
+    ' YYYY/MM/DD
+    '======================================================
+
+    If Len(Trim$(partes(0))) = 4 Then
+
+        anio = CLng(Trim$(partes(0)))
+        mes = CLng(Trim$(partes(1)))
+        dia = CLng(Trim$(partes(2)))
+
+    Else
+
+        '==================================================
+        ' DD/MM/YYYY
+        '==================================================
+
+        dia = CLng(Trim$(partes(0)))
+        mes = CLng(Trim$(partes(1)))
+        anio = CLng(Trim$(partes(2)))
+
+    End If
+
+    If dia < 1 Or dia > 31 Then GoTo ErrorFecha
+    If mes < 1 Or mes > 12 Then GoTo ErrorFecha
+    If anio < 1900 Or anio > 2100 Then GoTo ErrorFecha
+
+    '======================================================
+    ' VALIDAR QUE NO SE AJUSTE AUTOMATICAMENTE UNA FECHA
+    ' INVALIDA COMO 31/02/2026.
+    '======================================================
+
+    Dim fechaPrueba As Date
+
+    fechaPrueba = DateSerial(anio, mes, dia)
+
+    If Day(fechaPrueba) <> dia Or _
+       Month(fechaPrueba) <> mes Or _
+       Year(fechaPrueba) <> anio Then
+
+        GoTo ErrorFecha
+
+    End If
+
+    ConvertirFechaDMYModificar = fechaPrueba
+
+    Exit Function
+
+ErrorFecha:
+
+    ConvertirFechaDMYModificar = valor
+
+End Function
+
 
 '==========================================================
 ' APLICAR MODIFICACION
@@ -873,22 +1005,33 @@ Public Sub AplicarModificacion()
 
     Dim ws As Worksheet
     Dim cn As Object
+    Dim rs As Object
+    Dim camposAccess As Object
 
     Dim ultimaFila As Long
     Dim fila As Long
+    Dim c As Long
 
     Dim id As Variant
+    Dim colRFC As Long
 
-    Dim sql As String
-    Dim listaCampos As String
-
-    Dim c As Long
     Dim campo As String
-    Dim valor As Variant
+    Dim claveCampo As String
+
+    Dim valorExcel As Variant
+    Dim valorAccess As Variant
+
+    Dim listaCampos As String
+    Dim sql As String
+
+    Dim huboCambio As Boolean
+    Dim encontradoAccess As Boolean
 
     Dim cantidadEncontrados As Long
     Dim cantidadModificados As Long
+    Dim cantidadSinCambios As Long
     Dim cantidadSinID As Long
+    Dim cantidadNoEncontrados As Long
 
     Dim respuesta As VbMsgBoxResult
 
@@ -906,20 +1049,36 @@ Public Sub AplicarModificacion()
 
 
     '======================================================
-    ' BUSCAR ULTIMA FILA CON RFC
-    '
-    ' RFC está en F.
+    ' BUSCAR RFC POR ENCABEZADO
+    '======================================================
+
+    colRFC = _
+        BuscarColumna( _
+            ws, _
+            "RFC")
+
+
+    If colRFC = 0 Then
+
+        MsgBox _
+            "No se encontro la columna RFC.", _
+            vbCritical, _
+            "MODIFICAR"
+
+        Exit Sub
+
+    End If
+
+
+    '======================================================
+    ' ULTIMA FILA
     '======================================================
 
     ultimaFila = _
         ws.Cells( _
             ws.Rows.Count, _
-            "F").End(xlUp).Row
+            colRFC).End(xlUp).Row
 
-
-    '======================================================
-    ' VALIDAR
-    '======================================================
 
     If ultimaFila < FILA_INICIO Then
 
@@ -934,7 +1093,7 @@ Public Sub AplicarModificacion()
 
 
     '======================================================
-    ' CONTAR REGISTROS CON ID
+    ' CONTAR REGISTROS Y VALIDAR ID
     '======================================================
 
     For fila = _
@@ -946,7 +1105,7 @@ Public Sub AplicarModificacion()
             CStr( _
                 ws.Cells( _
                     fila, _
-                    6).Value)) <> "" Then
+                    colRFC).Value)) <> "" Then
 
 
             cantidadEncontrados = _
@@ -959,7 +1118,7 @@ Public Sub AplicarModificacion()
                     COLUMNA_ID_AUX).Value
 
 
-            If Trim$(CStr(id)) = "" Then
+            If EsValorVacioModificar(id) Then
 
                 cantidadSinID = _
                     cantidadSinID + 1
@@ -972,10 +1131,6 @@ Public Sub AplicarModificacion()
 
     Next fila
 
-
-    '======================================================
-    ' VALIDAR REGISTROS
-    '======================================================
 
     If cantidadEncontrados = 0 Then
 
@@ -1011,10 +1166,17 @@ Public Sub AplicarModificacion()
 
     respuesta = _
         MsgBox( _
-            "Se modificarán TODOS los registros cargados." & _
-            vbCrLf & vbCrLf & _
-            "Registros a modificar: " & _
+            "Se revisarán " & _
             cantidadEncontrados & _
+            " registros." & _
+            vbCrLf & vbCrLf & _
+            "Solo se modificarán los registros" & _
+            vbCrLf & _
+            "que realmente tengan cambios." & _
+            vbCrLf & vbCrLf & _
+            "Al continuar, Excel quedará bloqueado" & _
+            vbCrLf & _
+            "hasta terminar el proceso." & _
             vbCrLf & vbCrLf & _
             "¿Deseas continuar?", _
             vbYesNo + _
@@ -1031,15 +1193,27 @@ Public Sub AplicarModificacion()
 
 
     '======================================================
-    ' PREPARAR EXCEL
+    ' BLOQUEAR EXCEL DURANTE EL PROCESO
+    '
+    ' El usuario no podrá:
+    ' - mover la selección
+    ' - editar celdas
+    ' - presionar otros botones
+    '
+    ' El proceso SI puede actualizar la barra de estado.
     '======================================================
-
-    Application.ScreenUpdating = False
 
     Application.EnableEvents = False
 
+    Application.ScreenUpdating = True
+
+    Application.Cursor = xlWait
+
+    Application.Interactive = False
+
     Application.StatusBar = _
-        "Aplicando modificaciones..."
+        "APLICANDO MODIFICACIONES... " & _
+        "0 de " & cantidadEncontrados
 
 
     '======================================================
@@ -1061,7 +1235,41 @@ Public Sub AplicarModificacion()
 
 
     '======================================================
-    ' RECORRER TODOS LOS REGISTROS
+    ' OBTENER LOS NOMBRES DE CAMPOS DE ACCESS UNA SOLA VEZ
+    '
+    ' Esto evita llamar CampoExisteEnAccess para cada celda
+    ' y hace mucho mas rapido el proceso.
+    '======================================================
+
+    Set camposAccess = _
+        CreateObject("Scripting.Dictionary")
+
+    camposAccess.CompareMode = vbTextCompare
+
+
+    Set rs = _
+        cn.Execute( _
+            "SELECT TOP 1 * FROM [" & _
+            TABLA_ACCESS & "]")
+
+
+    For c = 0 To rs.Fields.Count - 1
+
+        camposAccess( _
+            UCase$( _
+                Trim$( _
+                    CStr( _
+                        rs.Fields(c).Name)))) = True
+
+    Next c
+
+
+    rs.Close
+    Set rs = Nothing
+
+
+    '======================================================
+    ' RECORRER REGISTROS
     '======================================================
 
     For fila = _
@@ -1069,20 +1277,12 @@ Public Sub AplicarModificacion()
         ultimaFila
 
 
-        '==================================================
-        ' SOLO PROCESAR FILAS QUE TENGAN RFC
-        '==================================================
-
         If Trim$( _
             CStr( _
                 ws.Cells( _
                     fila, _
-                    6).Value)) <> "" Then
+                    colRFC).Value)) <> "" Then
 
-
-            '================================================
-            ' ID DE ACCESS
-            '================================================
 
             id = _
                 ws.Cells( _
@@ -1090,15 +1290,58 @@ Public Sub AplicarModificacion()
                     COLUMNA_ID_AUX).Value
 
 
+            Application.StatusBar = _
+                "APLICANDO MODIFICACIONES... " & _
+                (fila - FILA_INICIO + 1) & _
+                " de " & _
+                cantidadEncontrados & _
+                " | Fila " & fila
+
+
+            DoEvents
+
+
             '================================================
-            ' CREAR LISTA SET
+            ' OBTENER REGISTRO ORIGINAL
             '================================================
+
+            sql = _
+                "SELECT * FROM [" & _
+                TABLA_ACCESS & "] " & _
+                "WHERE [Id]=" & _
+                CLng(id)
+
+
+            Set rs = _
+                cn.Execute(sql)
+
+
+            encontradoAccess = _
+                Not rs.EOF
+
+
+            If Not encontradoAccess Then
+
+                cantidadNoEncontrados = _
+                    cantidadNoEncontrados + 1
+
+                rs.Close
+                Set rs = Nothing
+
+                GoTo SiguienteFila
+
+
+            End If
+
 
             listaCampos = ""
+            huboCambio = False
 
 
             '================================================
-            ' RECORRER COLUMNAS A:AL
+            ' COMPARAR A:AL CONTRA ACCESS
+            '
+            ' SOLO SE AGREGAN A SET LOS CAMPOS DIFERENTES.
             '================================================
 
             For c = _
@@ -1117,73 +1360,81 @@ Public Sub AplicarModificacion()
                 If campo <> "" Then
 
 
-                    '========================================
-                    ' NO MODIFICAR ID
-                    '========================================
-
                     If UCase$(campo) <> "ID" Then
 
 
-                        '====================================
-                        ' NO MODIFICAR CAMPOS CALCULADOS
-                        '====================================
+                        If Not EsCampoCalculadoModificar( _
+                            campo) Then
 
-                        If UCase$(campo) <> "RFC_COMPLETO" And _
-                           UCase$(campo) <> "FECHA_APLICAR_AHORRO" And _
-                           UCase$(campo) <> "FECHA_HOY" And _
-                           UCase$(campo) <> "RESULTADO_ANALISIS" Then
+
+                            claveCampo = _
+                                UCase$(campo)
 
 
                             '================================
-                            ' VERIFICAR QUE EXISTA EN ACCESS
+                            ' EL CAMPO EXISTE EN ACCESS
                             '================================
 
-                            If CampoExisteEnAccess( _
-                                cn, _
-                                TABLA_ACCESS, _
-                                campo) Then
+                            If camposAccess.Exists( _
+                                claveCampo) Then
 
 
-                                valor = _
+                                valorExcel = _
                                     ws.Cells( _
                                         fila, _
                                         c).Value
 
 
-                                If listaCampos <> "" Then
-
-                                    listaCampos = _
-                                        listaCampos & ","
-
-                                End If
+                                valorAccess = _
+                                    rs.Fields( _
+                                        campo).Value
 
 
-                                '================================
-                                ' CAMPO VACIO
-                                '================================
+                                '============================
+                                ' COMPARAR
+                                '============================
 
-                                If Trim$( _
-                                    CStr(valor)) = "" Then
-
-
-                                    listaCampos = _
-                                        listaCampos & _
-                                        "[" & campo & "]=Null"
+                                If Not ValoresIgualesModificar( _
+                                    valorExcel, _
+                                    valorAccess) Then
 
 
-                                Else
+                                    huboCambio = True
 
 
-                                    '================================
-                                    ' CAMPO CON VALOR
-                                    '================================
+                                    If listaCampos <> "" Then
 
-                                    listaCampos = _
-                                        listaCampos & _
-                                        "[" & campo & "]='" & _
-                                        EscaparSQL( _
-                                            CStr(valor)) & _
-                                        "'"
+                                        listaCampos = _
+                                            listaCampos & ","
+
+                                    End If
+
+
+                                    '========================
+                                    ' VACIO = NULL
+                                    '========================
+
+                                    If EsValorVacioModificar( _
+                                        valorExcel) Then
+
+
+                                        listaCampos = _
+                                            listaCampos & _
+                                            "[" & campo & "]=Null"
+
+
+                                    Else
+
+
+                                        listaCampos = _
+                                            listaCampos & _
+                                            "[" & campo & "]=" & _
+                                            ValorSQLModificar( _
+                                                valorExcel, _
+                                                campo)
+
+
+                                    End If
 
 
                                 End If
@@ -1204,11 +1455,16 @@ Public Sub AplicarModificacion()
             Next c
 
 
+            rs.Close
+            Set rs = Nothing
+
+
             '================================================
-            ' ACTUALIZAR ACCESS
+            ' ACTUALIZAR SOLO SI HUBO CAMBIOS
             '================================================
 
-            If listaCampos <> "" Then
+            If huboCambio And _
+               listaCampos <> "" Then
 
 
                 sql = _
@@ -1227,21 +1483,22 @@ Public Sub AplicarModificacion()
                     cantidadModificados + 1
 
 
+            Else
+
+
+                cantidadSinCambios = _
+                    cantidadSinCambios + 1
+
+
             End If
 
 
         End If
 
 
-        '==================================================
-        ' ACTUALIZAR BARRA DE ESTADO
-        '==================================================
+SiguienteFila:
 
-        Application.StatusBar = _
-            "Modificando registro " & _
-            (fila - FILA_INICIO + 1) & _
-            " de " & _
-            cantidadEncontrados & "..."
+        DoEvents
 
 
     Next fila
@@ -1249,16 +1506,28 @@ Public Sub AplicarModificacion()
 
     '======================================================
     ' RESTAURAR FORMULAS
+    '
+    ' SOLO DESPUES DE TERMINAR ACCESS.
     '======================================================
 
-    If cantidadModificados > 0 Then
+    Application.StatusBar = _
+        "ACTUALIZANDO FORMULAS Y PREPARANDO RESULTADOS..."
 
+
+    DoEvents
+
+
+    If cantidadModificados > 0 Then
 
         RellenarFormulasModificar _
             ws, _
             FILA_INICIO, _
             ultimaFila
 
+        FormatearFechasModificar _
+            ws, _
+            FILA_INICIO, _
+            ultimaFila
 
     End If
 
@@ -1266,18 +1535,34 @@ Public Sub AplicarModificacion()
     Application.Calculate
 
 
+    Application.StatusBar = _
+        "MODIFICACION COMPLETADA."
+
+
+    DoEvents
+
+
     '======================================================
-    ' MENSAJE FINAL
+    ' RESULTADO
     '======================================================
 
     MsgBox _
         "MODIFICACION COMPLETADA." & _
         vbCrLf & vbCrLf & _
-        "Registros encontrados: " & _
+        "Registros revisados: " & _
         cantidadEncontrados & _
         vbCrLf & _
         "Registros modificados: " & _
-        cantidadModificados, _
+        cantidadModificados & _
+        vbCrLf & _
+        "Sin cambios: " & _
+        cantidadSinCambios & _
+        IIf( _
+            cantidadNoEncontrados > 0, _
+            vbCrLf & _
+            "No encontrados en Access: " & _
+            cantidadNoEncontrados, _
+            ""), _
         vbInformation, _
         "MODIFICAR"
 
@@ -1287,6 +1572,13 @@ Salir:
     On Error Resume Next
 
 
+    If Not rs Is Nothing Then
+
+        rs.Close
+
+    End If
+
+
     If Not cn Is Nothing Then
 
         cn.Close
@@ -1294,7 +1586,16 @@ Salir:
     End If
 
 
+    Set rs = Nothing
+    Set cn = Nothing
+    Set camposAccess = Nothing
+
+
     Application.StatusBar = False
+
+    Application.Interactive = True
+
+    Application.Cursor = xlDefault
 
     Application.EnableEvents = True
 
@@ -1306,7 +1607,26 @@ Salir:
 
 ErrorHandler:
 
+    On Error Resume Next
+
+    If Not rs Is Nothing Then
+
+        rs.Close
+
+    End If
+
+    If Not cn Is Nothing Then
+
+        cn.Close
+
+    End If
+
+
     Application.StatusBar = False
+
+    Application.Interactive = True
+
+    Application.Cursor = xlDefault
 
     Application.EnableEvents = True
 
@@ -1314,9 +1634,11 @@ ErrorHandler:
 
 
     MsgBox _
-        "ERROR AL APLICAR LAS MODIFICACIONES." & _
+        "ERROR AL APLICAR LA MODIFICACION." & _
         vbCrLf & vbCrLf & _
-        "Registro en fila: " & fila & _
+        "Fila: " & fila & _
+        vbCrLf & _
+        "Campo: " & campo & _
         vbCrLf & _
         "Numero: " & Err.Number & _
         vbCrLf & _
@@ -1325,9 +1647,294 @@ ErrorHandler:
         "ERROR DE MODIFICACION"
 
 
-    Resume Salir
-
 End Sub
+
+
+'==========================================================
+' CAMPOS CALCULADOS
+'
+' NO SE COMPARAN NI SE ACTUALIZAN EN ACCESS.
+'==========================================================
+
+Private Function EsCampoCalculadoModificar( _
+    ByVal nombreCampo As String) As Boolean
+
+
+    Select Case UCase$( _
+        Trim$(nombreCampo))
+
+
+        Case "RFC_COMPLETO"
+
+            EsCampoCalculadoModificar = True
+
+
+        Case "FECHA_APLICAR_AHORRO"
+
+            EsCampoCalculadoModificar = True
+
+
+        Case "FECHA_HOY"
+
+            EsCampoCalculadoModificar = True
+
+
+        Case "RESULTADO_ANALISIS"
+
+            EsCampoCalculadoModificar = True
+
+
+        Case Else
+
+            EsCampoCalculadoModificar = False
+
+
+    End Select
+
+End Function
+
+
+'==========================================================
+' COMPROBAR SI UN VALOR ESTA VACIO
+'==========================================================
+
+Private Function EsValorVacioModificar( _
+    ByVal valor As Variant) As Boolean
+
+
+    If IsError(valor) Then
+
+        EsValorVacioModificar = True
+        Exit Function
+
+    End If
+
+
+    If IsNull(valor) Then
+
+        EsValorVacioModificar = True
+        Exit Function
+
+    End If
+
+
+    If IsEmpty(valor) Then
+
+        EsValorVacioModificar = True
+        Exit Function
+
+    End If
+
+
+    If Trim$(CStr(valor)) = "" Then
+
+        EsValorVacioModificar = True
+        Exit Function
+
+    End If
+
+
+    EsValorVacioModificar = False
+
+End Function
+
+
+'==========================================================
+' COMPARAR VALOR DE EXCEL CONTRA ACCESS
+'==========================================================
+
+Private Function ValoresIgualesModificar( _
+    ByVal valorExcel As Variant, _
+    ByVal valorAccess As Variant) As Boolean
+
+
+    Dim textoExcel As String
+    Dim textoAccess As String
+
+
+    '======================================================
+    ' AMBOS VACIOS
+    '======================================================
+
+    If EsValorVacioModificar(valorExcel) And _
+       EsValorVacioModificar(valorAccess) Then
+
+        ValoresIgualesModificar = True
+
+        Exit Function
+
+    End If
+
+
+    '======================================================
+    ' UNO VACIO Y OTRO NO
+    '======================================================
+
+    If EsValorVacioModificar(valorExcel) Xor _
+       EsValorVacioModificar(valorAccess) Then
+
+        ValoresIgualesModificar = False
+
+        Exit Function
+
+    End If
+
+
+    '======================================================
+    ' FECHAS
+    '======================================================
+
+    If IsDate(valorAccess) And _
+       IsDate(valorExcel) Then
+
+        ValoresIgualesModificar = _
+            (CDbl(CDate(valorExcel)) = _
+             CDbl(CDate(valorAccess)))
+
+        Exit Function
+
+    End If
+
+
+    '======================================================
+    ' NUMEROS
+    '======================================================
+
+    If IsNumeric(valorAccess) And _
+       IsNumeric(valorExcel) Then
+
+        ValoresIgualesModificar = _
+            (CDbl(valorExcel) = _
+             CDbl(valorAccess))
+
+        Exit Function
+
+    End If
+
+
+    '======================================================
+    ' TEXTO
+    '======================================================
+
+    textoExcel = _
+        UCase$( _
+            Trim$( _
+                CStr(valorExcel)))
+
+
+    textoAccess = _
+        UCase$( _
+            Trim$( _
+                CStr(valorAccess)))
+
+
+    ValoresIgualesModificar = _
+        (textoExcel = textoAccess)
+
+End Function
+
+
+'==========================================================
+' CONVERTIR VALOR DE EXCEL A SQL
+'==========================================================
+
+Private Function ValorSQLModificar( _
+    ByVal valor As Variant, _
+    Optional ByVal nombreCampo As String = "") As String
+
+    Dim fechaReal As Variant
+
+    If IsError(valor) Then
+        ValorSQLModificar = "Null"
+        Exit Function
+    End If
+
+    If IsNull(valor) Then
+        ValorSQLModificar = "Null"
+        Exit Function
+    End If
+
+    If IsEmpty(valor) Then
+        ValorSQLModificar = "Null"
+        Exit Function
+    End If
+
+    If Trim$(CStr(valor)) = "" Then
+        ValorSQLModificar = "Null"
+        Exit Function
+    End If
+
+    '======================================================
+    ' CAMPOS DE FECHA EN ACCESS = TEXTO CORTO
+    '
+    ' SE ENVIA:
+    '     'DD/MM/YYYY'
+    '
+    ' NO SE USA #FECHA# PORQUE ACCESS LOS TIENE COMO TEXTO.
+    '======================================================
+
+    If EsCampoFechaModificar(nombreCampo) Then
+
+        fechaReal = ConvertirFechaDMYModificar(valor)
+
+        If IsDate(fechaReal) Then
+
+            ValorSQLModificar = _
+                "'" & _
+                Format(CDate(fechaReal), "dd/mm/yyyy") & _
+                "'"
+
+        Else
+
+            ValorSQLModificar = _
+                "'" & _
+                EscaparSQL(CStr(valor)) & _
+                "'"
+
+        End If
+
+        Exit Function
+
+    End If
+
+    '======================================================
+    ' RESTO DE FECHAS REALES DE ACCESS
+    '======================================================
+
+    If IsDate(valor) Then
+
+        ValorSQLModificar = _
+            "#" & _
+            Format(CDate(valor), "yyyy\/mm\/dd") & _
+            "#"
+
+        Exit Function
+
+    End If
+
+    '======================================================
+    ' NUMERO
+    '======================================================
+
+    If IsNumeric(valor) Then
+
+        ValorSQLModificar = _
+            Replace(CStr(valor), ",", ".")
+
+        Exit Function
+
+    End If
+
+    '======================================================
+    ' TEXTO
+    '======================================================
+
+    ValorSQLModificar = _
+        "'" & _
+        EscaparSQL(CStr(valor)) & _
+        "'"
+
+End Function
 
 
 '==========================================================
@@ -1730,6 +2337,51 @@ ErrorHandler:
 End Sub
 
 
+ '==========================================================
+' FORMATEAR FECHAS EN EXCEL
+'
+' SOLO CAMBIA LA PRESENTACION.
+' LAS FECHAS SIGUEN SIENDO FECHAS REALES EN EXCEL.
+'==========================================================
+
+Private Sub FormatearFechasModificar( _
+    ByVal ws As Worksheet, _
+    ByVal filaInicio As Long, _
+    ByVal filaFinal As Long)
+
+    Dim col As Long
+
+    If filaFinal < filaInicio Then
+        Exit Sub
+    End If
+
+    col = BuscarColumna(ws, "FECHA_SOLICITA_AHORRO_O_CUANDO_INGRESO")
+
+    If col > 0 Then
+        ws.Range( _
+            ws.Cells(filaInicio, col), _
+            ws.Cells(filaFinal, col)).NumberFormat = "dd/mm/yyyy"
+    End If
+
+    col = BuscarColumna(ws, "FECHA_APLICAR_AHORRO")
+
+    If col > 0 Then
+        ws.Range( _
+            ws.Cells(filaInicio, col), _
+            ws.Cells(filaFinal, col)).NumberFormat = "dd/mm/yyyy"
+    End If
+
+    col = BuscarColumna(ws, "FECHA_HOY")
+
+    If col > 0 Then
+        ws.Range( _
+            ws.Cells(filaInicio, col), _
+            ws.Cells(filaFinal, col)).NumberFormat = "dd/mm/yyyy"
+    End If
+
+End Sub
+
+
 '==========================================================
 ' BUSCAR COLUMNA POR ENCABEZADO
 '==========================================================
@@ -2017,4 +2669,9 @@ ErrorHandler:
 
 
 End Sub
+
+
+
+
+
 
