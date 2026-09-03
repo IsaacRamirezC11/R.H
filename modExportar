@@ -20,7 +20,16 @@ Option Explicit
 ' NO EXPORTA FORMULAS NI DROPDOWNS.
 ' EXPORTA DIRECTAMENTE LOS DATOS DE ACCESS.
 '
+' CORRECCION DE FECHAS:
+'   - Detecta campos Date/Time de Access.
+'   - Convierte correctamente las fechas.
+'   - Si Access entrega una fecha como texto,
+'     se interpreta como DD/MM/YYYY.
+'   - Las columnas de fecha se muestran como DD/MM/YYYY.
+'   - Evita que aparezcan numeros seriales como 46327.
+'
 '==========================================================
+
 
 Public Sub ExportarBaseAccess()
 
@@ -46,6 +55,9 @@ Public Sub ExportarBaseAccess()
     Dim respuesta As VbMsgBoxResult
 
     Dim i As Long
+
+    Dim camposFecha As Object
+    Dim nombreCampo As String
 
 
     On Error GoTo ErrorHandler
@@ -167,6 +179,23 @@ Public Sub ExportarBaseAccess()
 
 
     '======================================================
+    ' CREAR DICCIONARIO DE CAMPOS DE FECHA
+    '
+    ' Access:
+    '
+    ' 7 = adDate
+    '
+    ' También se consideran campos cuyo nombre contiene
+    ' FECHA, por si la fecha está almacenada como texto.
+    '======================================================
+
+    Set camposFecha = _
+        CreateObject("Scripting.Dictionary")
+
+    camposFecha.CompareMode = 1
+
+
+    '======================================================
     ' ESCRIBIR ENCABEZADOS
     '======================================================
 
@@ -175,8 +204,41 @@ Public Sub ExportarBaseAccess()
 
     For columna = 0 To cantidadCampos - 1
 
+        nombreCampo = _
+            Trim$( _
+                CStr( _
+                    rs.Fields(columna).Name))
+
+
         wsExpo.Cells(1, columna + 1).Value = _
-            rs.Fields(columna).Name
+            nombreCampo
+
+
+        '--------------------------------------------------
+        ' DETECTAR CAMPOS DATE/TIME DE ACCESS
+        '
+        ' Tipo 7 = Date
+        '--------------------------------------------------
+
+        If rs.Fields(columna).Type = 7 Then
+
+            camposFecha(CStr(columna + 1)) = True
+
+        ElseIf InStr( _
+                    1, _
+                    UCase$(nombreCampo), _
+                    "FECHA", _
+                    vbTextCompare) > 0 Then
+
+            '------------------------------------------------
+            ' SI EL CAMPO SE LLAMA FECHA PERO ACCESS LO
+            ' ENTREGA COMO TEXTO, TAMBIEN LO TRATAMOS
+            ' COMO FECHA.
+            '------------------------------------------------
+
+            camposFecha(CStr(columna + 1)) = True
+
+        End If
 
     Next columna
 
@@ -196,6 +258,10 @@ Public Sub ExportarBaseAccess()
         For columna = 0 To cantidadCampos - 1
 
 
+            '================================================
+            ' OBTENER VALOR
+            '================================================
+
             If IsNull( _
                 rs.Fields(columna).Value) Then
 
@@ -209,17 +275,88 @@ Public Sub ExportarBaseAccess()
             End If
 
 
+            '================================================
+            ' ESCRIBIR VALOR
+            '================================================
+
             If IsError(valor) Then
 
                 wsExpo.Cells( _
                     fila, _
                     columna + 1).Value = ""
 
+
+            ElseIf camposFecha.Exists( _
+                        CStr(columna + 1)) Then
+
+                '================================================
+                ' CAMPO DE FECHA
+                '
+                ' SI ES UNA FECHA REAL DE ACCESS:
+                '     SE CONSERVA COMO FECHA.
+                '
+                ' SI VIENE COMO TEXTO:
+                '     SE CONVIERTE EXPLICITAMENTE COMO
+                '     DD/MM/YYYY.
+                '================================================
+
+                If Trim$(CStr(valor)) = "" Then
+
+                    wsExpo.Cells( _
+                        fila, _
+                        columna + 1).Value = ""
+
+
+                ElseIf VarType(valor) = vbDate Then
+
+                    wsExpo.Cells( _
+                        fila, _
+                        columna + 1).Value = _
+                            CDate(valor)
+
+
+                Else
+
+                    Dim fechaConvertida As Variant
+
+                    fechaConvertida = _
+                        ConvertirFechaAccess(valor)
+
+
+                    If IsDate(fechaConvertida) Then
+
+                        wsExpo.Cells( _
+                            fila, _
+                            columna + 1).Value = _
+                                CDate(fechaConvertida)
+
+                    Else
+
+                        '----------------------------------------
+                        ' SI NO SE PUDO CONVERTIR,
+                        ' SE CONSERVA EL VALOR ORIGINAL.
+                        '----------------------------------------
+
+                        wsExpo.Cells( _
+                            fila, _
+                            columna + 1).Value = _
+                                valor
+
+                    End If
+
+                End If
+
+
             Else
+
+                '================================================
+                ' CAMPO NORMAL
+                '================================================
 
                 wsExpo.Cells( _
                     fila, _
-                    columna + 1).Value = valor
+                    columna + 1).Value = _
+                        valor
 
             End If
 
@@ -253,6 +390,43 @@ Public Sub ExportarBaseAccess()
 
 
     Loop
+
+
+    '======================================================
+    ' FORMATO DE FECHAS
+    '
+    ' TODAS LAS COLUMNAS DETECTADAS COMO FECHA SE
+    ' MOSTRARAN COMO:
+    '
+    ' DD/MM/YYYY
+    '
+    ' EJEMPLO:
+    '
+    ' 01/08/2026
+    ' 08/11/2026
+    ' 03/01/2017
+    '
+    ' Y NO:
+    '
+    ' 08/01/2026
+    ' 46327
+    ' 46260
+    '======================================================
+
+    Dim claveFecha As Variant
+    Dim columnaFecha As Long
+
+
+    For Each claveFecha In camposFecha.Keys
+
+        columnaFecha = _
+            CLng(claveFecha)
+
+
+        wsExpo.Columns(columnaFecha).NumberFormat = _
+            "dd/mm/yyyy"
+
+    Next claveFecha
 
 
     '======================================================
@@ -399,6 +573,8 @@ Salir:
 
     Set cn = Nothing
 
+    Set camposFecha = Nothing
+
 
     Application.StatusBar = False
 
@@ -444,3 +620,235 @@ ErrorHandler:
 
 
 End Sub
+
+
+'==========================================================
+' CONVERTIR FECHA DE ACCESS
+'
+' ESTA FUNCION EVITA QUE VBA/EXCEL INTERPRETE:
+'
+' 01/08/2026
+'
+' COMO:
+'
+' 08/01/2026
+'
+' LA FECHA SE INTERPRETA COMO:
+'
+' DIA / MES / AÑO
+'
+'==========================================================
+
+Private Function ConvertirFechaAccess( _
+    ByVal valor As Variant) As Variant
+
+
+    Dim texto As String
+
+    Dim partes As Variant
+
+    Dim dia As Long
+    Dim mes As Long
+    Dim anio As Long
+
+    Dim fechaTexto As String
+
+    Dim posicionEspacio As Long
+    Dim posicionT As Long
+
+
+    On Error GoTo NoEsFecha
+
+
+    '======================================================
+    ' SI YA ES UNA FECHA REAL
+    '======================================================
+
+    If VarType(valor) = vbDate Then
+
+        ConvertirFechaAccess = _
+            CDate(valor)
+
+        Exit Function
+
+    End If
+
+
+    '======================================================
+    ' CONVERTIR A TEXTO
+    '======================================================
+
+    texto = _
+        Trim$( _
+            CStr(valor))
+
+
+    If texto = "" Then
+
+        ConvertirFechaAccess = ""
+
+        Exit Function
+
+    End If
+
+
+    '======================================================
+    ' QUITAR HORA
+    '
+    ' EJEMPLO:
+    '
+    ' 01/08/2026 00:00:00
+    '
+    ' QUEDA:
+    '
+    ' 01/08/2026
+    '======================================================
+
+    posicionEspacio = _
+        InStr(1, texto, " ")
+
+
+    If posicionEspacio > 0 Then
+
+        texto = _
+            Left$( _
+                texto, _
+                posicionEspacio - 1)
+
+    End If
+
+
+    posicionT = _
+        InStr(1, texto, "T")
+
+
+    If posicionT > 0 Then
+
+        texto = _
+            Left$( _
+                texto, _
+                posicionT - 1)
+
+    End If
+
+
+    '======================================================
+    ' CAMBIAR GUIONES POR /
+    '======================================================
+
+    texto = _
+        Replace( _
+            texto, _
+            "-", _
+            "/")
+
+
+    '======================================================
+    ' SEPARAR
+    '======================================================
+
+    partes = _
+        Split(texto, "/")
+
+
+    If UBound(partes) <> 2 Then
+
+        GoTo NoEsFecha
+
+    End If
+
+
+    '======================================================
+    ' DETECTAR FORMATO
+    '
+    ' NORMAL:
+    '
+    ' DD/MM/YYYY
+    '
+    ' TAMBIEN SOPORTA:
+    '
+    ' YYYY/MM/DD
+    '======================================================
+
+    If Len(Trim$(partes(0))) = 4 Then
+
+        '----------------------------------------------
+        ' YYYY/MM/DD
+        '----------------------------------------------
+
+        anio = _
+            CLng(Trim$(partes(0)))
+
+        mes = _
+            CLng(Trim$(partes(1)))
+
+        dia = _
+            CLng(Trim$(partes(2)))
+
+
+    Else
+
+        '----------------------------------------------
+        ' DD/MM/YYYY
+        '----------------------------------------------
+
+        dia = _
+            CLng(Trim$(partes(0)))
+
+        mes = _
+            CLng(Trim$(partes(1)))
+
+        anio = _
+            CLng(Trim$(partes(2)))
+
+    End If
+
+
+    '======================================================
+    ' VALIDAR
+    '======================================================
+
+    If dia < 1 Or dia > 31 Then
+
+        GoTo NoEsFecha
+
+    End If
+
+
+    If mes < 1 Or mes > 12 Then
+
+        GoTo NoEsFecha
+
+    End If
+
+
+    If anio < 1900 Or anio > 2100 Then
+
+        GoTo NoEsFecha
+
+    End If
+
+
+    '======================================================
+    ' CREAR FECHA SIN INTERPRETACION REGIONAL
+    '======================================================
+
+    ConvertirFechaAccess = _
+        DateSerial( _
+            anio, _
+            mes, _
+            dia)
+
+
+    Exit Function
+
+
+NoEsFecha:
+
+    ConvertirFechaAccess = valor
+
+
+End Function
+
+
+
