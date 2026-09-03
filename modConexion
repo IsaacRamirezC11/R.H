@@ -1,36 +1,96 @@
 Option Explicit
 
-'========================================================
-' OBTENER RUTA DE ACCESS
-'========================================================
-
+' ============================================================
+' OBTENER RUTA DE LA BASE DE DATOS
+' ============================================================
 Public Function ObtenerRutaAccess() As String
 
-    Dim ruta As String
+    Dim fso As Object
+    Dim carpetaUsuario As String
+    Dim carpetaFront As String
+    Dim carpetaPrincipal As String
+    Dim carpetaDatabase As String
+    Dim rutaBase As String
 
-    ruta = ThisWorkbook.Path & "\..\database\AhorroSolidario_DEV.accdb"
+    On Error GoTo ErrorHandler
 
-    If Dir(ruta) = "" Then
+    Set fso = CreateObject("Scripting.FileSystemObject")
+
+    ' --------------------------------------------------------
+    ' Ubicación actual del Frontend
+    '
+    ' Ejemplo:
+    ' C:\SistemaAhorroSolidario\front\user01
+    ' --------------------------------------------------------
+    carpetaUsuario = ThisWorkbook.Path
+
+    ' --------------------------------------------------------
+    ' Subir de:
+    ' C:\SistemaAhorroSolidario\front\user01
+    '
+    ' a:
+    ' C:\SistemaAhorroSolidario\front
+    ' --------------------------------------------------------
+    carpetaFront = fso.GetParentFolderName(carpetaUsuario)
+
+    ' --------------------------------------------------------
+    ' Subir de:
+    ' C:\SistemaAhorroSolidario\front
+    '
+    ' a:
+    ' C:\SistemaAhorroSolidario
+    ' --------------------------------------------------------
+    carpetaPrincipal = fso.GetParentFolderName(carpetaFront)
+
+    ' --------------------------------------------------------
+    ' Entrar a la carpeta database
+    ' --------------------------------------------------------
+    carpetaDatabase = fso.BuildPath(carpetaPrincipal, "database")
+
+    ' --------------------------------------------------------
+    ' Construir la ruta completa de Access
+    ' --------------------------------------------------------
+    rutaBase = fso.BuildPath(carpetaDatabase, "AhorroSolidario_DEV.accdb")
+
+    ' --------------------------------------------------------
+    ' Comprobar que exista el archivo
+    ' --------------------------------------------------------
+    If Not fso.FileExists(rutaBase) Then
 
         MsgBox "NO SE ENCONTRÓ LA BASE DE DATOS." & vbCrLf & vbCrLf & _
-               "Se buscó en:" & vbCrLf & _
-               ruta, _
-               vbCritical, "ERROR DE CONEXIÓN"
+               "Ruta que VBA intentó utilizar:" & vbCrLf & vbCrLf & _
+               rutaBase & vbCrLf & vbCrLf & _
+               "Verifica que el archivo AhorroSolidario_DEV.accdb " & _
+               "se encuentre dentro de la carpeta database.", _
+               vbCritical, "ERROR DE RUTA"
 
         ObtenerRutaAccess = ""
         Exit Function
 
     End If
 
-    ObtenerRutaAccess = ruta
+    ' --------------------------------------------------------
+    ' Devolver ruta
+    ' --------------------------------------------------------
+    ObtenerRutaAccess = rutaBase
+
+    Exit Function
+
+ErrorHandler:
+
+    MsgBox "NO SE PUDO OBTENER LA RUTA DE ACCESS." & vbCrLf & vbCrLf & _
+           "Error: " & Err.Number & vbCrLf & _
+           "Descripción: " & Err.Description, _
+           vbCritical, "ERROR DE RUTA"
+
+    ObtenerRutaAccess = ""
 
 End Function
 
 
-'========================================================
-' ABRIR CONEXIÓN A ACCESS
-'========================================================
-
+' ============================================================
+' ABRIR CONEXIÓN CON ACCESS
+' ============================================================
 Public Function AbrirConexionAccess() As Object
 
     Dim cn As Object
@@ -38,19 +98,26 @@ Public Function AbrirConexionAccess() As Object
 
     On Error GoTo ErrorHandler
 
+    ' Obtener ruta de Access
     ruta = ObtenerRutaAccess()
 
+    ' Si no existe la ruta, detener
     If ruta = "" Then
+
         Set AbrirConexionAccess = Nothing
         Exit Function
+
     End If
 
+    ' Crear conexión ADO
     Set cn = CreateObject("ADODB.Connection")
 
+    ' Abrir conexión
     cn.Open "Provider=Microsoft.ACE.OLEDB.12.0;" & _
             "Data Source=" & ruta & ";" & _
             "Persist Security Info=False;"
 
+    ' Devolver conexión
     Set AbrirConexionAccess = cn
 
     Exit Function
@@ -58,34 +125,84 @@ Public Function AbrirConexionAccess() As Object
 ErrorHandler:
 
     MsgBox "NO SE PUDO CONECTAR CON ACCESS." & vbCrLf & vbCrLf & _
+           "Ruta utilizada:" & vbCrLf & vbCrLf & _
+           ruta & vbCrLf & vbCrLf & _
            "Error " & Err.Number & ":" & vbCrLf & _
            Err.Description, _
-           vbCritical, "ERROR ADO"
+           vbCritical, "ERROR DE CONEXIÓN"
 
     Set AbrirConexionAccess = Nothing
 
 End Function
 
 
-'========================================================
-' PROBAR CONEXIÓN
-'========================================================
+' ============================================================
+' PRUEBA SOLAMENTE DE LA RUTA
+' ============================================================
+Public Sub ProbarRutaAccess()
 
-Public Sub ProbarConexionAccess()
-
-    Dim cn As Object
+    Dim ruta As String
 
     On Error GoTo ErrorHandler
 
+    ' Obtener la ruta
+    ruta = ObtenerRutaAccess()
+
+    ' Si no encontró la base
+    If ruta = "" Then Exit Sub
+
+    ' Mostrar la ruta
+    MsgBox "LA RUTA DE ACCESS ES:" & vbCrLf & vbCrLf & _
+           ruta, _
+           vbInformation, "PRUEBA DE RUTA"
+
+    Exit Sub
+
+ErrorHandler:
+
+    MsgBox "ERROR AL PROBAR LA RUTA." & vbCrLf & vbCrLf & _
+           "Error " & Err.Number & ":" & vbCrLf & _
+           Err.Description, _
+           vbCritical, "ERROR"
+
+End Sub
+
+
+' ============================================================
+' PRUEBA COMPLETA DE CONEXIÓN
+' ============================================================
+Public Sub ProbarConexionAccess()
+
+    Dim cn As Object
+    Dim ruta As String
+
+    On Error GoTo ErrorHandler
+
+    ' Obtener ruta
+    ruta = ObtenerRutaAccess()
+
+    If ruta = "" Then Exit Sub
+
+    ' Intentar conexión
     Set cn = AbrirConexionAccess()
 
+    ' Comprobar conexión
     If cn Is Nothing Then Exit Sub
 
-    MsgBox "CONEXIÓN CORRECTA" & vbCrLf & vbCrLf & _
-           "Excel se conectó correctamente con Access.", _
+    ' Mostrar resultado
+    MsgBox "CONEXIÓN CORRECTA." & vbCrLf & vbCrLf & _
+           "Excel se conectó correctamente con Access." & vbCrLf & vbCrLf & _
+           "Base de datos:" & vbCrLf & _
+           ruta & vbCrLf & vbCrLf & _
+           "Tabla:" & vbCrLf & _
+           "AHORRO_SOLIDARIO", _
            vbInformation, "AHORRO SOLIDARIO"
 
-    cn.Close
+    ' Cerrar conexión
+    If cn.State <> 0 Then
+        cn.Close
+    End If
+
     Set cn = Nothing
 
     Exit Sub
@@ -93,9 +210,11 @@ Public Sub ProbarConexionAccess()
 ErrorHandler:
 
     MsgBox "NO SE PUDO PROBAR LA CONEXIÓN." & vbCrLf & vbCrLf & _
+           "Ruta:" & vbCrLf & _
+           ruta & vbCrLf & vbCrLf & _
            "Error " & Err.Number & ":" & vbCrLf & _
            Err.Description, _
-           vbCritical, "ERROR"
+           vbCritical, "ERROR DE CONEXIÓN"
 
 End Sub
 
