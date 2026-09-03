@@ -102,7 +102,7 @@ Public Sub RegistrarNuevoRegistro()
             ultimaColumna) Then
 
             filasConDatos = _
-                filasConDatos + 1
+                filasConDatos 1
 
         End If
 
@@ -120,6 +120,31 @@ Public Sub RegistrarNuevoRegistro()
 
         Exit Sub
 
+    End If
+    
+    '====================================================
+    ' VALIDAR TODOS LOS CAMPOS OBLIGATORIOS
+    '
+    ' IMPORTANTE:
+    '
+    ' TODAVIA NO SE CONECTA A ACCESS.
+    '
+    ' SI EXISTE UN ERROR:
+    '
+    '   NO SE GUARDA NINGUN REGISTRO.
+    '
+    '====================================================
+    
+    Dim detalleErrores As String
+    
+    If Not ValidarCamposObligatorios( _
+        ws, _
+        ultimaColumna, _
+        filasConDatos, _
+        detalleErrores) Then
+    
+        Exit Sub
+    
     End If
 
 
@@ -281,7 +306,7 @@ Public Sub RegistrarNuevoRegistro()
 
 
                 filasSinRFC = _
-                    filasSinRFC + 1
+                    filasSinRFC 1
 
 
             Else
@@ -332,7 +357,7 @@ Public Sub RegistrarNuevoRegistro()
 
 
                     registrosGuardados = _
-                        registrosGuardados + 1
+                        registrosGuardados 1
 
 
                     '------------------------------------
@@ -378,7 +403,7 @@ Public Sub RegistrarNuevoRegistro()
                 Else
 
                     errores = _
-                        errores + 1
+                        errores 1
 
                 End If
 
@@ -787,6 +812,256 @@ Private Function FilaTieneDatosCapturados( _
 
     Next i
 
+
+End Function
+
+'========================================================
+' VALIDAR CAMPOS OBLIGATORIOS
+'
+' REVISA TODAS LAS FILAS QUE SE VAN A REGISTRAR.
+'
+' NO CONSIDERA OBLIGATORIOS LOS CAMPOS CALCULADOS:
+'
+' RFC_COMPLETO
+' FECHA_APLICAR_AHORRO
+' FECHA_HOY
+' RESULTADO_ANALISIS
+'
+' TAMPOCO REVISA CELDAS QUE CONTENGAN FORMULAS.
+'
+' DEVUELVE TRUE SI TODO ESTA CORRECTO.
+'
+'========================================================
+
+Private Function ValidarCamposObligatorios( _
+    ByVal ws As Worksheet, _
+    ByVal ultimaColumna As Long, _
+    ByVal filasConDatos As Long, _
+    ByRef detalleErrores As String) As Boolean
+
+
+    Dim fila As Long
+    Dim columna As Long
+
+    Dim encabezado As String
+    Dim valor As Variant
+
+    Dim tieneDatos As Boolean
+
+    Dim erroresEncontrados As Long
+
+
+    ValidarCamposObligatorios = False
+
+    detalleErrores = ""
+
+
+    '====================================================
+    ' RECORRER TODAS LAS FILAS
+    '====================================================
+
+    For fila = _
+        FILA_INICIAL To _
+        FILA_FINAL
+
+
+        tieneDatos = _
+            FilaTieneDatosCapturados( _
+                ws, _
+                fila, _
+                ultimaColumna)
+
+
+        If tieneDatos Then
+
+
+            '================================================
+            ' REVISAR CADA COLUMNA
+            '================================================
+
+            For columna = _
+                1 To _
+                ultimaColumna
+
+
+                '============================================
+                ' SI TIENE FORMULA, NO SE VALIDA
+                '============================================
+
+                If Not ws.Cells( _
+                    fila, _
+                    columna).HasFormula Then
+
+
+                    encabezado = _
+                        Trim$( _
+                            CStr( _
+                                ws.Cells( _
+                                    FILA_ENCABEZADOS, _
+                                    columna).Value))
+
+
+                    If encabezado <> "" Then
+
+
+                        '====================================
+                        ' EXCLUIR CAMPOS CALCULADOS
+                        '====================================
+
+                        If Not EsCampoCalculadoRegistrar( _
+                            encabezado) Then
+
+
+                            valor = _
+                                ws.Cells( _
+                                    fila, _
+                                    columna).Value
+
+
+                            '================================
+                            ' CAMPO VACIO
+                            '================================
+
+                            If IsError(valor) Or _
+                               IsEmpty(valor) Or _
+                               Trim$(CStr(valor)) = "" Then
+
+
+                                erroresEncontrados = _
+                                    erroresEncontrados 1
+
+
+                                detalleErrores = _
+                                    detalleErrores & _
+                                    "Fila " & _
+                                    fila & _
+                                    " ? " & _
+                                    encabezado & _
+                                    vbCrLf
+
+
+                                '================================
+                                ' EVITAR MENSAJE ENORME
+                                '================================
+
+                                If erroresEncontrados >= 30 Then
+
+
+                                    detalleErrores = _
+                                        detalleErrores & _
+                                        vbCrLf & _
+                                        "... y existen más campos vacíos."
+
+
+                                    Exit For
+
+
+                                End If
+
+
+                            End If
+
+
+                        End If
+
+
+                    End If
+
+
+                End If
+
+
+            Next columna
+
+
+        End If
+
+
+        If erroresEncontrados >= 30 Then
+
+            Exit For
+
+        End If
+
+
+    Next fila
+
+
+    '====================================================
+    ' RESULTADO
+    '====================================================
+
+    If erroresEncontrados > 0 Then
+
+
+        MsgBox _
+            "NO SE PUEDE REGISTRAR." & _
+            vbCrLf & vbCrLf & _
+            "Existen campos obligatorios vacíos:" & _
+            vbCrLf & vbCrLf & _
+            detalleErrores & _
+            vbCrLf & _
+            "Completa los campos antes de presionar REGISTRAR.", _
+            vbExclamation, _
+            "DATOS INCOMPLETOS"
+
+
+        ValidarCamposObligatorios = False
+
+
+    Else
+
+
+        ValidarCamposObligatorios = True
+
+
+    End If
+
+
+End Function
+
+
+'========================================================
+' CAMPOS QUE NO SON OBLIGATORIOS
+'
+' SON CAMPOS CALCULADOS POR FORMULA.
+'
+'========================================================
+
+Private Function EsCampoCalculadoRegistrar( _
+    ByVal nombreCampo As String) As Boolean
+
+
+    Select Case UCase$( _
+        Trim$(nombreCampo))
+
+
+        Case "RFC_COMPLETO"
+
+            EsCampoCalculadoRegistrar = True
+
+
+        Case "FECHA_APLICAR_AHORRO"
+
+            EsCampoCalculadoRegistrar = True
+
+
+        Case "FECHA_HOY"
+
+            EsCampoCalculadoRegistrar = True
+
+
+        Case "RESULTADO_ANALISIS"
+
+            EsCampoCalculadoRegistrar = True
+
+
+        Case Else
+
+            EsCampoCalculadoRegistrar = False
+
+
+    End Select
 
 End Function
 
@@ -1245,4 +1520,5 @@ Private Function ConvertirValorSQL( _
 
 
 End Function
+
 
